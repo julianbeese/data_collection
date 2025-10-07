@@ -32,7 +32,7 @@ DIRECT_KEYWORDS = [
     "referendum", "eu referendum", "european referendum",
     "leave the eu", "leaving the eu", "exit from europe",
     "withdrawal agreement", "divorce bill", "transition period",
-    "hard brexit", "soft brexit", "no-deal brexit"
+    "hard brexit", "soft brexit", "british exit", "eu exit", "no-deal brexit", "brexit-related"
 ]
 
 INDIRECT_KEYWORDS = [
@@ -45,7 +45,9 @@ INDIRECT_KEYWORDS = [
     "independence", "british sovereignty", "take back control",
     "immigration control", "border control",
     "trade agreement", "trade deal", "wto",
-    "northern ireland protocol", "backstop", "irish border"
+    "northern ireland protocol", "backstop", "irish border", "member state", "future relationship",
+    "european treaty", "maastricht treaty", "partnership agreement",
+    "economic partnership", "freedom of movement", "european integration"
 ]
 
 # Kombiniere alle Keywords
@@ -77,7 +79,7 @@ def analyze_keywords(text):
 
     # Berechne Confidence Score
     # Direkte Keywords: höhere Gewichtung
-    direct_score = min(len(found_direct) * 0.3, 0.7)  # Max 0.7
+    direct_score = min(len(found_direct) * 0.3, 1)  # Max 0.7
     indirect_score = min(len(found_indirect) * 0.05, 0.3)  # Max 0.3
 
     confidence = min(direct_score + indirect_score, 1.0)
@@ -102,7 +104,7 @@ def analyze_with_gemini(debate_name, date, speeches_text, keywords_found, api_ke
     model = genai.GenerativeModel(GEMINI_MODEL)
 
     # Erstelle Prompt
-    prompt = f"""You are analyzing UK parliamentary debates to determine if they relate to Brexit.
+    prompt = f"""You are analyzing UK parliamentary House of Commons debates to determine if they relate to Brexit.
 
 **Debate Information:**
 - Topic: {debate_name}
@@ -116,15 +118,16 @@ def analyze_with_gemini(debate_name, date, speeches_text, keywords_found, api_ke
 Analyze whether this debate has a significant relation to Brexit (the UK's withdrawal from the European Union).
 
 Consider:
-- Direct mentions of Brexit, referendum, Article 50, withdrawal
+- Direct mentions of Brexit, EU exit, Article 50, withdrawal
 - Discussions about EU membership, sovereignty, immigration from EU context
 - Trade agreements in context of leaving EU
 - Northern Ireland border issues related to Brexit
+- etc.
 
 **Response format (JSON):**
 {{
   "has_brexit_relation": true/false,
-  "confidence": 0.0-1.0,
+  "confidence": 0.0-1.0 (0 = no relation to Brexit, 1 = very likely relation to Brexit),
   "reasoning": "One sentence explanation"
 }}
 
