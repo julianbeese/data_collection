@@ -196,96 +196,105 @@ def combine_results(keyword_confidence, keyword_count, llm_has_relation, llm_con
 
 
 def setup_output_database(conn_source):
-    """Erstellt eine Kopie der Datenbank mit zusätzlichen Brexit-Spalten"""
-    print(f"Erstelle Output-Datenbank: {OUTPUT_DB}")
+    """Erstellt (oder aktualisiert) die Output-DB und stellt benötigtes Schema sicher."""
+    print(f"Initialisiere Output-Datenbank: {OUTPUT_DB}")
 
-    # Erstelle neue Verbindung für Output
+    def table_exists(conn, table_name):
+        return conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = ?", [table_name]).fetchone()[0] > 0
+
+    def get_columns(conn, table_name):
+        return {row[1] for row in conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()}
+
+    # Erstelle/öffne Verbindung für Output
     conn_out = duckdb.connect(OUTPUT_DB)
 
-    # Kopiere alle Tabellen
-    print("  Kopiere debates...")
-    debates_data = conn_source.execute("SELECT * FROM debates").fetchall()
-    
-    # Erstelle debates Tabelle mit korrektem Schema
-    conn_out.execute("""
-        CREATE TABLE debates (
-            debate_id VARCHAR,
-            date DATE,
-            file_name VARCHAR,
-            major_heading_text VARCHAR,
-            colnum VARCHAR,
-            time VARCHAR,
-            url VARCHAR
+    # Debates
+    if not table_exists(conn_out, "debates"):
+        print("  Erstelle und kopiere Tabelle: debates")
+        conn_out.execute(
+            """
+            CREATE TABLE debates (
+                debate_id VARCHAR,
+                date DATE,
+                file_name VARCHAR,
+                major_heading_text VARCHAR,
+                colnum VARCHAR,
+                time VARCHAR,
+                url VARCHAR
+            )
+            """
         )
-    """)
-    
-    # Füge Daten ein
-    for row in debates_data:
-        conn_out.execute("INSERT INTO debates VALUES (?, ?, ?, ?, ?, ?, ?)", row)
+        debates_data = conn_source.execute("SELECT * FROM debates").fetchall()
+        for row in debates_data:
+            conn_out.execute("INSERT INTO debates VALUES (?, ?, ?, ?, ?, ?, ?)", row)
+    else:
+        print("  Tabelle 'debates' vorhanden – überspringe Kopie")
 
-    print("  Kopiere topics...")
-    topics_data = conn_source.execute("SELECT * FROM topics").fetchall()
-    
-    # Erstelle topics Tabelle mit korrektem Schema
-    conn_out.execute("""
-        CREATE TABLE topics (
-            topic_id VARCHAR,
-            debate_id VARCHAR,
-            minor_heading_text VARCHAR,
-            colnum VARCHAR,
-            time VARCHAR,
-            url VARCHAR
+    # Topics
+    if not table_exists(conn_out, "topics"):
+        print("  Erstelle und kopiere Tabelle: topics")
+        conn_out.execute(
+            """
+            CREATE TABLE topics (
+                topic_id VARCHAR,
+                debate_id VARCHAR,
+                minor_heading_text VARCHAR,
+                colnum VARCHAR,
+                time VARCHAR,
+                url VARCHAR
+            )
+            """
         )
-    """)
-    
-    for row in topics_data:
-        conn_out.execute("INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?)", row)
+        topics_data = conn_source.execute("SELECT * FROM topics").fetchall()
+        for row in topics_data:
+            conn_out.execute("INSERT INTO topics VALUES (?, ?, ?, ?, ?, ?)", row)
+    else:
+        print("  Tabelle 'topics' vorhanden – überspringe Kopie")
 
-    print("  Kopiere speeches...")
-    speeches_data = conn_source.execute("SELECT * FROM speeches").fetchall()
-    
-    # Erstelle speeches Tabelle mit korrektem Schema
-    conn_out.execute("""
-        CREATE TABLE speeches (
-            speech_id VARCHAR,
-            topic_id VARCHAR,
-            debate_id VARCHAR,
-            speaker_name VARCHAR,
-            person_id VARCHAR,
-            speaker_office VARCHAR,
-            speech_type VARCHAR,
-            oral_qnum VARCHAR,
-            colnum VARCHAR,
-            time VARCHAR,
-            url VARCHAR,
-            speech_text VARCHAR,
-            paragraph_count INTEGER
+    # Speeches
+    if not table_exists(conn_out, "speeches"):
+        print("  Erstelle und kopiere Tabelle: speeches")
+        conn_out.execute(
+            """
+            CREATE TABLE speeches (
+                speech_id VARCHAR,
+                topic_id VARCHAR,
+                debate_id VARCHAR,
+                speaker_name VARCHAR,
+                person_id VARCHAR,
+                speaker_office VARCHAR,
+                speech_type VARCHAR,
+                oral_qnum VARCHAR,
+                colnum VARCHAR,
+                time VARCHAR,
+                url VARCHAR,
+                speech_text VARCHAR,
+                paragraph_count INTEGER
+            )
+            """
         )
-    """)
-    
-    for row in speeches_data:
-        conn_out.execute("INSERT INTO speeches VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+        speeches_data = conn_source.execute("SELECT * FROM speeches").fetchall()
+        for row in speeches_data:
+            conn_out.execute("INSERT INTO speeches VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+    else:
+        print("  Tabelle 'speeches' vorhanden – überspringe Kopie")
 
-    # Füge Brexit-Spalten zur speeches-Tabelle hinzu
-    print("  Füge Brexit-Klassifizierungsspalten hinzu...")
-    conn_out.execute("""
-        ALTER TABLE speeches ADD COLUMN brexit_related BOOLEAN DEFAULT FALSE
-    """)
-    conn_out.execute("""
-        ALTER TABLE speeches ADD COLUMN brexit_confidence FLOAT DEFAULT 0.0
-    """)
-    conn_out.execute("""
-        ALTER TABLE speeches ADD COLUMN brexit_keyword_confidence FLOAT DEFAULT 0.0
-    """)
-    conn_out.execute("""
-        ALTER TABLE speeches ADD COLUMN brexit_llm_confidence FLOAT DEFAULT 0.0
-    """)
-    conn_out.execute("""
-        ALTER TABLE speeches ADD COLUMN brexit_keywords_found VARCHAR
-    """)
-    conn_out.execute("""
-        ALTER TABLE speeches ADD COLUMN brexit_llm_reasoning VARCHAR
-    """)
+    # Stelle sicher, dass Brexit-Spalten existieren
+    print("  Stelle Brexit-Klassifizierungsspalten sicher…")
+    existing_cols = get_columns(conn_out, "speeches")
+    required_cols = [
+        ("brexit_related", "BOOLEAN DEFAULT FALSE"),
+        ("brexit_confidence", "FLOAT DEFAULT 0.0"),
+        ("brexit_keyword_confidence", "FLOAT DEFAULT 0.0"),
+        ("brexit_llm_confidence", "FLOAT DEFAULT 0.0"),
+        ("brexit_keywords_found", "VARCHAR"),
+        ("brexit_llm_reasoning", "VARCHAR"),
+    ]
+
+    for col_name, col_def in required_cols:
+        if col_name not in existing_cols:
+            conn_out.execute(f"ALTER TABLE speeches ADD COLUMN {col_name} {col_def}")
+            print(f"    + Spalte hinzugefügt: {col_name}")
 
     conn_out.commit()
     return conn_out
@@ -353,6 +362,26 @@ def main():
     # Verarbeite jede Debatte
     for i, (debate_id, date, debate_name) in enumerate(debates, 1):
         print(f"[{i}/{len(debates)}] {date} - {debate_name[:50]}")
+
+        # Resume: Überspringe bereits klassifizierte Debatten
+        already_processed = conn_out.execute(
+            """
+            SELECT 1 FROM speeches
+            WHERE debate_id = ?
+              AND (
+                    brexit_keywords_found IS NOT NULL
+                 OR brexit_llm_reasoning IS NOT NULL
+                 OR brexit_confidence > 0
+                 OR brexit_llm_confidence > 0
+              )
+            LIMIT 1
+            """,
+            [debate_id]
+        ).fetchone()
+        if already_processed:
+            print("  → Bereits klassifiziert, überspringe (Resume)")
+            total_processed += 1
+            continue
 
         # Hole ersten 5 Redebeiträge dieser Debatte
         speeches = conn_source.execute("""
