@@ -115,18 +115,26 @@ def get_related_debates_and_topics(conn_source, conn_target):
         if debate_data:
             columns = [row[1] for row in conn_source.execute("PRAGMA table_info('debates')").fetchall()]
             placeholders = ", ".join(["?" for _ in columns])
-            insert_sql = f"INSERT OR IGNORE INTO debates VALUES ({placeholders})"
+            insert_sql = f"INSERT INTO debates VALUES ({placeholders})"
             for row in debate_data:
-                conn_target.execute(insert_sql, row)
+                try:
+                    conn_target.execute(insert_sql, row)
+                except:
+                    # Überspringe bei Duplikaten
+                    pass
         
         # Kopiere zugehörige Topics
         topics_data = conn_source.execute("SELECT * FROM topics WHERE debate_id = ?", [debate_id]).fetchall()
         if topics_data:
             columns = [row[1] for row in conn_source.execute("PRAGMA table_info('topics')").fetchall()]
             placeholders = ", ".join(["?" for _ in columns])
-            insert_sql = f"INSERT OR IGNORE INTO topics VALUES ({placeholders})"
+            insert_sql = f"INSERT INTO topics VALUES ({placeholders})"
             for row in topics_data:
-                conn_target.execute(insert_sql, row)
+                try:
+                    conn_target.execute(insert_sql, row)
+                except:
+                    # Überspringe bei Duplikaten
+                    pass
 
 def main():
     print("=" * 70)
