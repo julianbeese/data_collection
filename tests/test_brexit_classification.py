@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Konfiguration
-DB_FILE = "debates.duckdb"
-OUTPUT_DB = "debates_brexit_test_jan2016.duckdb"
+DB_FILE = "../data/processed/debates.duckdb"
+OUTPUT_DB = "../data/processed/debates_brexit_test_jan2016.duckdb"
 GEMINI_MODEL = "gemini-2.0-flash-exp"
 
 

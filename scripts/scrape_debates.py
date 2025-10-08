@@ -12,7 +12,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_URL = "https://www.theyworkforyou.com/pwdata/scrapedxml/debates/"
-DATA_DIR = Path("data")
+DATA_DIR = Path("../data/raw")
 YEAR_START = 2012
 YEAR_END = 2022
 MAX_WORKERS = 10  # Anzahl paralleler Downloads

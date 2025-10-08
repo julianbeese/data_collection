@@ -5,7 +5,7 @@ Beispiel-Abfragen für die Debates-Datenbank
 
 import duckdb
 
-DB_FILE = "debates.duckdb"
+DB_FILE = "../data/processed/debates.duckdb"
 
 
 def main():

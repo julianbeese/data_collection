@@ -8,8 +8,8 @@ import duckdb
 from pathlib import Path
 
 # Konfiguration
-INPUT_DB = "debates_brexit_classified.duckdb"
-OUTPUT_DB = "debates_brexit_filtered.duckdb"
+INPUT_DB = "../data/processed/debates_brexit_classified.duckdb"
+OUTPUT_DB = "../data/processed/debates_brexit_filtered.duckdb"
 
 def get_table_schema(conn, table_name):
     """Holt das Schema einer Tabelle"""

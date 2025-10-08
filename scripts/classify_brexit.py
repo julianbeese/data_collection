@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Konfiguration
-DB_FILE = "debates.duckdb"
-OUTPUT_DB = "debates_brexit_classified.duckdb"
+DB_FILE = "../data/processed/debates.duckdb"
+OUTPUT_DB = "../data/processed/debates_brexit_classified.duckdb"
 GEMINI_MODEL = "gemini-2.5-flash"  # Gemini 2.0 Flash
 
 # Cost Tracking (Gemini 2.0 Flash Pricing)

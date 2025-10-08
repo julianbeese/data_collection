@@ -11,8 +11,8 @@ from datetime import datetime
 import re
 
 
-DATA_DIR = Path("data")
-DB_FILE = "debates.duckdb"
+DATA_DIR = Path("../data/raw")
+DB_FILE = "../data/processed/debates.duckdb"
 
 
 def create_tables(conn):
