@@ -375,6 +375,19 @@ def show_chunk_annotation():
                 )
                 
                 st.success("✅ Annotation gespeichert!")
+                
+                # Automatisch zum nächsten Chunk
+                if st.session_state.current_chunk_index < len(st.session_state.chunks) - 1:
+                    st.session_state.current_chunk_index += 1
+                    # Formularfelder zurücksetzen
+                    if f"frame_{chunk_id}" in st.session_state:
+                        del st.session_state[f"frame_{chunk_id}"]
+                    if f"notes_{chunk_id}" in st.session_state:
+                        del st.session_state[f"notes_{chunk_id}"]
+                    st.info("🔄 Lade nächsten Chunk...")
+                else:
+                    st.info("🎉 Alle Chunks annotiert!")
+                
                 st.rerun()
             else:
                 st.error("Bitte wähle eine Frame-Kategorie!")
