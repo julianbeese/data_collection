@@ -8,8 +8,29 @@ import os
 import sys
 import subprocess
 
+def install_streamlit():
+    """Installiert streamlit falls es nicht vorhanden ist"""
+    try:
+        import streamlit
+        print("Streamlit bereits installiert")
+        return True
+    except ImportError:
+        print("Streamlit nicht gefunden, installiere...")
+        try:
+            subprocess.run([sys.executable, '-m', 'pip', 'install', 'streamlit'], check=True)
+            print("Streamlit erfolgreich installiert")
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Fehler beim Installieren von Streamlit: {e}")
+            return False
+
 def main():
     print("Starting Streamlit for Railway...")
+    
+    # Installiere streamlit falls nötig
+    if not install_streamlit():
+        print("Konnte Streamlit nicht installieren")
+        sys.exit(1)
     
     # Set environment variables
     port = os.getenv('PORT', '8000')

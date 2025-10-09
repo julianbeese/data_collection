@@ -2,22 +2,17 @@
 # Railway Start Script
 echo "Starting Railway deployment..."
 
-# Debug: Show environment
-echo "PATH: $PATH"
-echo "PWD: $(pwd)"
-echo "Files in current directory:"
-ls -la
+# Install streamlit if not present
+echo "Checking for streamlit..."
+/opt/venv/bin/python -c "import streamlit" 2>/dev/null || {
+    echo "Streamlit not found, installing..."
+    /opt/venv/bin/pip install streamlit==1.50.0 plotly==6.3.1 pandas==2.3.3
+}
 
-# Try different streamlit paths
-echo "Looking for streamlit..."
-which streamlit || echo "streamlit not in PATH"
-ls -la /opt/venv/bin/ | grep streamlit || echo "streamlit not in /opt/venv/bin/"
-
-# Activate virtual environment explicitly
+# Activate virtual environment
 source /opt/venv/bin/activate
 echo "Virtual environment activated"
-echo "PATH after activation: $PATH"
 
-# Try to run streamlit
-echo "Attempting to run streamlit..."
+# Run streamlit
+echo "Starting streamlit..."
 /opt/venv/bin/python -m streamlit run streamlit_annotation_railway.py --server.port=$PORT --server.address=0.0.0.0

@@ -2,7 +2,7 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "/opt/venv/bin/python run_streamlit.py"
+startCommand = "./start.sh"
 healthcheckPath = "/"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
@@ -10,4 +10,4 @@ restartPolicyMaxRetries = 10
 
 # Explizite Konfiguration für Railway
 [railway]
-startCommand = "/opt/venv/bin/python run_streamlit.py"
+startCommand = "./start.sh"
