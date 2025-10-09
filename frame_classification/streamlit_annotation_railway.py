@@ -16,13 +16,13 @@ import plotly.graph_objects as go
 import os
 from psycopg2.extras import RealDictCursor
 
-# Railway PostgreSQL Konfiguration
+# Railway PostgreSQL Konfiguration (Fallback für lokale Entwicklung)
 DATABASE_CONFIG = {
-    'host': os.getenv('DATABASE_URL', 'localhost').split('@')[1].split('/')[0].split(':')[0] if '@' in os.getenv('DATABASE_URL', '') else os.getenv('DB_HOST', 'localhost'),
-    'port': int(os.getenv('DATABASE_URL', 'localhost').split(':')[-1].split('/')[0]) if ':' in os.getenv('DATABASE_URL', '') else int(os.getenv('DB_PORT', 5432)),
-    'database': os.getenv('DATABASE_URL', 'localhost').split('/')[-1] if '/' in os.getenv('DATABASE_URL', '') else os.getenv('DB_NAME', 'frame_classification'),
-    'user': os.getenv('DATABASE_URL', 'localhost').split('://')[1].split(':')[0] if '://' in os.getenv('DATABASE_URL', '') else os.getenv('DB_USER', 'postgres'),
-    'password': os.getenv('DATABASE_URL', 'localhost').split('@')[0].split(':')[-1] if '@' in os.getenv('DATABASE_URL', '') else os.getenv('DB_PASSWORD', '')
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'port': int(os.getenv('DB_PORT', 5432)),
+    'database': os.getenv('DB_NAME', 'frame_classification'),
+    'user': os.getenv('DB_USER', 'postgres'),
+    'password': os.getenv('DB_PASSWORD', '')
 }
 
 # Frame-Kategorien
@@ -39,13 +39,18 @@ def get_db_connection():
     """Erstellt PostgreSQL Verbindung für Railway"""
     try:
         # Railway DATABASE_URL Format: postgresql://user:password@host:port/database
-        if os.getenv('DATABASE_URL'):
-            conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+        database_url = os.getenv('DATABASE_URL')
+        if database_url:
+            # Verwende die DATABASE_URL direkt
+            conn = psycopg2.connect(database_url)
+            return conn
         else:
+            # Fallback für lokale Entwicklung
             conn = psycopg2.connect(**DATABASE_CONFIG)
-        return conn
+            return conn
     except Exception as e:
         st.error(f"Fehler bei Datenbankverbindung: {e}")
+        st.error(f"DATABASE_URL: {os.getenv('DATABASE_URL', 'Nicht gesetzt')}")
         return None
 
 def init_session_state():
@@ -486,6 +491,17 @@ def main():
     
     st.title("🏷️ Frame Classification - Railway")
     st.markdown("**Multi-User Annotation von Brexit-Debatten Chunks auf Railway**")
+    
+    # Debug-Informationen (nur in Development)
+    if os.getenv('RAILWAY_ENVIRONMENT') != 'production':
+        with st.expander("🔧 Debug-Informationen"):
+            st.write(f"DATABASE_URL gesetzt: {'Ja' if os.getenv('DATABASE_URL') else 'Nein'}")
+            if os.getenv('DATABASE_URL'):
+                # Zeige nur den Anfang der URL für Sicherheit
+                db_url = os.getenv('DATABASE_URL')
+                st.write(f"DATABASE_URL: {db_url[:20]}...")
+            else:
+                st.write("Verwende lokale Konfiguration")
     
     # Initialisiere Session State
     init_session_state()

@@ -97,15 +97,15 @@ class SimpleDatabaseChunker:
         return chunks
     
     def assign_chunks_to_annotators(self, conn, total_chunks: int):
-        """Weist 20% der Chunks zufällig den Annotatoren zu - JEDER CHUNK wird von 2 USERN annotiert"""
+        """Weist 1.000 Chunks zufällig den Annotatoren zu - JEDER CHUNK wird von 2 USERN annotiert"""
         print("Weise Chunks den Annotatoren zu (Doppel-Annotation)...")
         
         # Annotatoren
         annotators = ["Max", "Julian", "Lina", "Julius", "Rike"]
         
-        # Berechne 20% der Chunks
-        annotation_count = int(total_chunks * 0.2)
-        print(f"Wähle {annotation_count} Chunks ({annotation_count/total_chunks*100:.1f}%) für Annotation aus")
+        # Feste Anzahl: 1.000 Chunks für Annotation
+        annotation_count = 1000
+        print(f"Wähle {annotation_count} Chunks für Annotation aus")
         print(f"Jeder Chunk wird von 2 Usern annotiert = {annotation_count * 2} Annotationen")
         
         # Zufällige Auswahl der Chunk-IDs
@@ -115,6 +115,12 @@ class SimpleDatabaseChunker:
         # Hole alle Chunk-IDs
         all_chunk_ids = conn.execute("SELECT chunk_id FROM chunks ORDER BY chunk_id").fetchall()
         all_chunk_ids = [row[0] for row in all_chunk_ids]
+        
+        # Prüfe ob genügend Chunks verfügbar sind
+        if len(all_chunk_ids) < annotation_count:
+            print(f"⚠️ Nur {len(all_chunk_ids)} Chunks verfügbar, aber {annotation_count} benötigt")
+            annotation_count = len(all_chunk_ids)
+            print(f"Verwende alle verfügbaren {annotation_count} Chunks")
         
         # Zufällige Auswahl
         selected_chunk_ids = random.sample(all_chunk_ids, annotation_count)
