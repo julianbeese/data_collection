@@ -11,6 +11,12 @@ google-generativeai>=0.3.0
 # Environment Variables
 python-dotenv>=1.0.0
 
+# Data Analysis & Visualization
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
 # Standard-Bibliotheken (normalerweise bereits vorhanden)
 # pathlib - Standard in Python 3.4+
 # xml.etree.ElementTree - Standard Library
