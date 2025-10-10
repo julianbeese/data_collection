@@ -35,6 +35,14 @@ FRAME_CATEGORIES = [
     "Other"
 ]
 
+# Brexit-Position Kategorien
+BREXIT_POSITION_CATEGORIES = [
+    "Pro-Brexit",
+    "Anti-Brexit", 
+    "Neutral/Unclear",
+    "Not Applicable"
+]
+
 def get_db_connection():
     """Erstellt PostgreSQL Verbindung für Railway"""
     try:
@@ -95,6 +103,8 @@ def create_tables_if_not_exist():
                 frame_label VARCHAR(100),
                 annotation_confidence INTEGER,
                 annotation_notes TEXT,
+                pre_brexit BOOLEAN,
+                brexit_position VARCHAR(100),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -118,6 +128,21 @@ def create_tables_if_not_exist():
         # Indizes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_assigned_user ON chunks(assigned_user);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_frame_label ON chunks(frame_label);")
+        
+        # Füge neue Spalten hinzu falls sie nicht existieren
+        try:
+            cursor.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS pre_brexit BOOLEAN;")
+            cursor.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS brexit_position VARCHAR(100);")
+        except Exception as e:
+            # Spalten existieren möglicherweise bereits
+            pass
+        
+        # Aktualisiere pre_brexit Spalte basierend auf debate_date
+        cursor.execute("""
+            UPDATE chunks 
+            SET pre_brexit = (debate_date < '2016-06-23'::date)
+            WHERE pre_brexit IS NULL
+        """)
         
         conn.commit()
         cursor.close()
@@ -190,7 +215,7 @@ def load_database_chunks(user_name: str = None, limit: int = None) -> List[Dict[
             conn.close()
         return []
 
-def update_database_annotation(chunk_id: str, frame_label: str, confidence: int, notes: str, user_name: str):
+def update_database_annotation(chunk_id: str, frame_label: str, confidence: int, notes: str, user_name: str, brexit_position: str = None):
     """Aktualisiert Annotation in PostgreSQL"""
     conn = get_db_connection()
     if not conn:
@@ -202,11 +227,11 @@ def update_database_annotation(chunk_id: str, frame_label: str, confidence: int,
         update_sql = """
         UPDATE chunks 
         SET frame_label = %s, annotation_confidence = %s, annotation_notes = %s, 
-            assigned_user = %s, updated_at = CURRENT_TIMESTAMP
+            assigned_user = %s, brexit_position = %s, updated_at = CURRENT_TIMESTAMP
         WHERE chunk_id = %s
         """
         
-        cursor.execute(update_sql, (frame_label, confidence, notes, user_name, chunk_id))
+        cursor.execute(update_sql, (frame_label, confidence, notes, user_name, brexit_position, chunk_id))
         conn.commit()
         cursor.close()
         conn.close()
@@ -256,6 +281,25 @@ def get_statistics() -> Dict[str, Any]:
         """)
         user_stats = cursor.fetchall()
         
+        # Brexit-Position Statistiken
+        cursor.execute("""
+            SELECT brexit_position, COUNT(*) as count
+            FROM chunks 
+            WHERE brexit_position IS NOT NULL AND brexit_position != ''
+            GROUP BY brexit_position
+            ORDER BY count DESC
+        """)
+        brexit_stats = cursor.fetchall()
+        
+        # Pre-Brexit vs Post-Brexit Statistiken
+        cursor.execute("""
+            SELECT 
+                COUNT(CASE WHEN pre_brexit = true THEN 1 END) as pre_brexit_count,
+                COUNT(CASE WHEN pre_brexit = false THEN 1 END) as post_brexit_count
+            FROM chunks
+        """)
+        brexit_timing_stats = cursor.fetchone()
+        
         cursor.close()
         conn.close()
         
@@ -264,7 +308,10 @@ def get_statistics() -> Dict[str, Any]:
             'annotated_chunks': total_stats[1],
             'assigned_chunks': total_stats[2],
             'by_frame': {frame: count for frame, count in frame_stats},
-            'by_user': {user: count for user, count in user_stats}
+            'by_user': {user: count for user, count in user_stats},
+            'by_brexit_position': {position: count for position, count in brexit_stats},
+            'pre_brexit_count': brexit_timing_stats[0],
+            'post_brexit_count': brexit_timing_stats[1]
         }
         
     except Exception as e:
@@ -316,6 +363,35 @@ def show_statistics():
         st.subheader("👥 User-Verteilung")
         for user, count in stats['by_user'].items():
             st.write(f"- **{user}**: {count:,} Chunks")
+    
+    # Brexit-Timing Verteilung
+    if 'pre_brexit_count' in stats and 'post_brexit_count' in stats:
+        st.subheader("📅 Brexit-Timing")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Pre-Brexit Chunks", f"{stats['pre_brexit_count']:,}")
+        with col2:
+            st.metric("Post-Brexit Chunks", f"{stats['post_brexit_count']:,}")
+    
+    # Brexit-Position Verteilung
+    if stats.get('by_brexit_position'):
+        st.subheader("🇬🇧 Brexit-Positionen")
+        
+        try:
+            brexit_data = []
+            for position, count in stats['by_brexit_position'].items():
+                brexit_data.append({'Position': str(position), 'Anzahl': int(count)})
+            
+            if brexit_data:
+                brexit_df = pd.DataFrame(brexit_data)
+                st.bar_chart(brexit_df.set_index('Position'))
+            else:
+                st.info("Keine Brexit-Position Daten verfügbar")
+        except Exception as e:
+            st.warning(f"Konnte Chart nicht anzeigen: {e}")
+            st.write("**Brexit-Positionen:**")
+            for position, count in stats['by_brexit_position'].items():
+                st.write(f"- {position}: {count}")
 
 def show_chunk_annotation():
     """Zeigt Chunk-Annotation Interface"""
@@ -342,6 +418,13 @@ def show_chunk_annotation():
     st.write(f"**Debatte:** {current_chunk['debate_title']}")
     st.write(f"**Datum:** {current_chunk['debate_date']}")
     
+    # Pre-Brexit Status
+    pre_brexit = current_chunk.get('pre_brexit', False)
+    if pre_brexit:
+        st.info("🇬🇧 **Pre-Brexit Chunk** - Dieser Chunk stammt aus der Zeit vor dem Brexit-Referendum (23. Juni 2016)")
+    else:
+        st.info("📅 **Post-Brexit Chunk** - Dieser Chunk stammt aus der Zeit nach dem Brexit-Referendum")
+    
     # Chunk-Text
     st.subheader("📄 Chunk-Text")
     st.text_area("", current_chunk['chunk_text'], height=200, disabled=True)
@@ -356,6 +439,17 @@ def show_chunk_annotation():
         key=f"frame_{chunk_id}"
     )
     
+    # Brexit-Position (nur für Pre-Brexit Chunks)
+    brexit_position = None
+    if pre_brexit:
+        st.subheader("🇬🇧 Brexit-Position")
+        brexit_position = st.selectbox(
+            "Position des Sprechers zum Brexit:",
+            options=[""] + BREXIT_POSITION_CATEGORIES,
+            key=f"brexit_{chunk_id}",
+            help="Nur für Pre-Brexit Chunks relevant"
+        )
+    
     # Notes
     notes = st.text_area(
         "Notizen:",
@@ -369,9 +463,14 @@ def show_chunk_annotation():
     with col1:
         if st.button("💾 Speichern", type="primary"):
             if frame_label:
+                # Prüfe ob Brexit-Position für Pre-Brexit Chunks erforderlich ist
+                if pre_brexit and not brexit_position:
+                    st.error("Bitte wähle eine Brexit-Position für Pre-Brexit Chunks!")
+                    return
+                
                 # Aktualisiere Datenbank
                 update_database_annotation(
-                    chunk_id, frame_label, 3, notes, st.session_state.user_name
+                    chunk_id, frame_label, 3, notes, st.session_state.user_name, brexit_position
                 )
                 
                 st.success("✅ Annotation gespeichert!")
@@ -382,6 +481,8 @@ def show_chunk_annotation():
                     # Formularfelder zurücksetzen
                     if f"frame_{chunk_id}" in st.session_state:
                         del st.session_state[f"frame_{chunk_id}"]
+                    if f"brexit_{chunk_id}" in st.session_state:
+                        del st.session_state[f"brexit_{chunk_id}"]
                     if f"notes_{chunk_id}" in st.session_state:
                         del st.session_state[f"notes_{chunk_id}"]
                     st.info("🔄 Lade nächsten Chunk...")

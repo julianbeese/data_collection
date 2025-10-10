@@ -17,8 +17,8 @@ import time
 load_dotenv()
 
 # Konfiguration
-DB_FILE = "debates_brexit_filtered_min20words.duckdb"
-OUTPUT_DB = "debates_brexit_gemini_classified.duckdb"
+DB_FILE = "data/processed/debates_brexit_filtered_min20words.duckdb"
+OUTPUT_DB = "data/processed/debates_brexit_gemini_classified.duckdb"
 GEMINI_MODEL = "gemini-2.5-flash"
 
 # Cost Tracking (Gemini 2.5 Flash Pricing)

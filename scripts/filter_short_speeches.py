@@ -8,9 +8,9 @@ import duckdb
 from pathlib import Path
 
 # Konfiguration
-# Pfade relativ zum Hauptverzeichnis (script wird vom Hauptverzeichnis aus ausgeführt)
-INPUT_DB = "debates_brexit_filtered.duckdb"
-OUTPUT_DB = "debates_brexit_filtered_min20words.duckdb"
+# Pfade zu den Datenbanken im data/processed Verzeichnis
+INPUT_DB = "data/processed/debates_brexit_filtered.duckdb"
+OUTPUT_DB = "data/processed/debates_brexit_filtered_min20words.duckdb"
 
 def count_words(text):
     """Zählt die Wörter in einem Text"""
