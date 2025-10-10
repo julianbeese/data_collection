@@ -32,7 +32,7 @@ FRAME_CATEGORIES = [
     "Economic",
     "Moral Value",
     "Conflict",
-    "Other",
+    "None/Not Relevant",
     "t.b.d."
 ]
 
