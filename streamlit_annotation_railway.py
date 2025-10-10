@@ -32,7 +32,8 @@ FRAME_CATEGORIES = [
     "Economic",
     "Moral Value",
     "Conflict",
-    "Other"
+    "Other",
+    "t.b.d."
 ]
 
 # Brexit-Position Kategorien
