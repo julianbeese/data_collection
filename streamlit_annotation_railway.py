@@ -14,6 +14,7 @@ from typing import Dict, List, Any, Optional
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import io
 from psycopg2.extras import RealDictCursor
 
 # Railway PostgreSQL Konfiguration (Fallback für lokale Entwicklung)
@@ -569,6 +570,57 @@ def show_chunk_annotation():
         st.session_state.current_chunk_index = new_index - 1
         st.rerun()
 
+def get_classified_chunks() -> List[Dict[str, Any]]:
+    """Lädt alle klassifizierten Chunks aus der Datenbank"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute("""
+            SELECT 
+                chunk_id,
+                speech_id,
+                speaker_name,
+                speaker_party,
+                debate_title,
+                debate_date,
+                chunk_text,
+                frame_label,
+                brexit_position,
+                assigned_user,
+                annotation_notes,
+                word_count,
+                char_count,
+                pre_brexit,
+                created_at,
+                updated_at
+            FROM chunks
+            WHERE frame_label IS NOT NULL 
+            AND frame_label != ''
+            ORDER BY updated_at DESC
+        """)
+        
+        chunks = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Konvertiere zu Dictionary-Liste
+        chunk_list = []
+        for chunk in chunks:
+            chunk_dict = dict(chunk)
+            chunk_list.append(chunk_dict)
+        
+        return chunk_list
+        
+    except Exception as e:
+        st.error(f"Fehler beim Laden der klassifizierten Chunks: {e}")
+        if conn:
+            conn.close()
+        return []
+
 def get_annotation_conflicts() -> List[Dict[str, Any]]:
     """Erkennt echte Annotation-Konflikte zwischen verschiedenen Usern"""
     conn = get_db_connection()
@@ -858,6 +910,208 @@ def show_conflict_resolution():
                 else:
                     st.error("Bitte fülle alle erforderlichen Felder aus!")
 
+def show_classified_chunks():
+    """Zeigt alle klassifizierten Chunks in einer filterbaren Tabelle"""
+    st.subheader("📋 Klassifizierte Chunks")
+    st.markdown("Übersicht über alle bereits klassifizierten Chunks mit Filter- und Suchoptionen")
+    
+    # Lade klassifizierte Chunks
+    chunks = get_classified_chunks()
+    
+    if not chunks:
+        st.info("Keine klassifizierten Chunks gefunden.")
+        return
+    
+    st.write(f"**Gesamt klassifizierte Chunks:** {len(chunks)}")
+    
+    # Filter-Optionen
+    st.subheader("🔍 Filter & Suche")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        frame_filter = st.selectbox(
+            "Frame-Kategorie:",
+            options=["Alle"] + FRAME_CATEGORIES,
+            key="classified_frame_filter"
+        )
+    
+    with col2:
+        user_filter = st.selectbox(
+            "User:",
+            options=["Alle"] + list(set([c['assigned_user'] for c in chunks if c['assigned_user']])),
+            key="classified_user_filter"
+        )
+    
+    with col3:
+        brexit_filter = st.selectbox(
+            "Brexit-Position:",
+            options=["Alle"] + BREXIT_POSITION_CATEGORIES,
+            key="classified_brexit_filter"
+        )
+    
+    with col4:
+        speaker_filter = st.selectbox(
+            "Speaker:",
+            options=["Alle"] + list(set([c['speaker_name'] for c in chunks if c['speaker_name']])),
+            key="classified_speaker_filter"
+        )
+    
+    # Zusätzliche Filter
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        pre_brexit_filter = st.selectbox(
+            "Brexit-Timing:",
+            options=["Alle", "Pre-Brexit", "Post-Brexit"],
+            key="classified_timing_filter"
+        )
+    
+    with col2:
+        search_text = st.text_input(
+            "Text-Suche:",
+            placeholder="Suche in Chunk-Text...",
+            key="classified_text_search"
+        )
+    
+    with col3:
+        date_from = st.date_input(
+            "Von Datum:",
+            key="classified_date_from"
+        )
+    
+    # Filtere Chunks
+    filtered_chunks = chunks
+    
+    if frame_filter != "Alle":
+        filtered_chunks = [c for c in filtered_chunks if c['frame_label'] == frame_filter]
+    
+    if user_filter != "Alle":
+        filtered_chunks = [c for c in filtered_chunks if c['assigned_user'] == user_filter]
+    
+    if brexit_filter != "Alle":
+        filtered_chunks = [c for c in filtered_chunks if c['brexit_position'] == brexit_filter]
+    
+    if speaker_filter != "Alle":
+        filtered_chunks = [c for c in filtered_chunks if c['speaker_name'] == speaker_filter]
+    
+    if pre_brexit_filter == "Pre-Brexit":
+        filtered_chunks = [c for c in filtered_chunks if c['pre_brexit'] == True]
+    elif pre_brexit_filter == "Post-Brexit":
+        filtered_chunks = [c for c in filtered_chunks if c['pre_brexit'] == False]
+    
+    if search_text:
+        filtered_chunks = [c for c in filtered_chunks if search_text.lower() in c['chunk_text'].lower()]
+    
+    if date_from:
+        filtered_chunks = [c for c in filtered_chunks if c['debate_date'] >= date_from]
+    
+    st.write(f"**Gefilterte Chunks:** {len(filtered_chunks)}")
+    
+    if not filtered_chunks:
+        st.info("Keine Chunks entsprechen den Filterkriterien.")
+        return
+    
+    # Erstelle DataFrame für bessere Darstellung
+    display_data = []
+    for chunk in filtered_chunks:
+        display_data.append({
+            'Chunk-ID': chunk['chunk_id'][:20] + '...' if len(chunk['chunk_id']) > 20 else chunk['chunk_id'],
+            'Speaker': chunk['speaker_name'],
+            'Party': chunk['speaker_party'],
+            'Frame': chunk['frame_label'],
+            'Brexit-Pos': chunk['brexit_position'] or 'N/A',
+            'User': chunk['assigned_user'],
+            'Wörter': chunk['word_count'],
+            'Datum': chunk['debate_date'],
+            'Pre-Brexit': 'Ja' if chunk['pre_brexit'] else 'Nein',
+            'Notizen': chunk['annotation_notes'][:50] + '...' if chunk['annotation_notes'] and len(chunk['annotation_notes']) > 50 else chunk['annotation_notes'] or '',
+            'Aktualisiert': chunk['updated_at'].strftime('%Y-%m-%d %H:%M') if chunk['updated_at'] else 'N/A'
+        })
+    
+    df = pd.DataFrame(display_data)
+    
+    # Zeige Tabelle
+    st.subheader("📊 Klassifizierte Chunks Tabelle")
+    
+    # Sortierbare Tabelle
+    st.dataframe(
+        df,
+        use_container_width=True,
+        height=600
+    )
+    
+    # Export-Optionen
+    st.subheader("📤 Export")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("📄 CSV Export"):
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"classified_chunks_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+    
+    with col2:
+        if st.button("📊 Excel Export"):
+            # Erstelle Excel-Datei
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Klassifizierte Chunks', index=False)
+            
+            st.download_button(
+                label="Download Excel",
+                data=output.getvalue(),
+                file_name=f"classified_chunks_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+    
+    with col3:
+        if st.button("🔄 Aktualisieren"):
+            st.rerun()
+    
+    # Detaillierte Ansicht für ausgewählte Chunks
+    st.subheader("🔍 Detaillierte Ansicht")
+    
+    selected_chunk_id = st.selectbox(
+        "Wähle einen Chunk für Details:",
+        options=[c['chunk_id'] for c in filtered_chunks],
+        format_func=lambda x: f"{x[:20]}... - {next(c['frame_label'] for c in filtered_chunks if c['chunk_id'] == x)}",
+        key="detailed_chunk_selector"
+    )
+    
+    if selected_chunk_id:
+        selected_chunk = next(c for c in filtered_chunks if c['chunk_id'] == selected_chunk_id)
+        
+        st.write("**Chunk-Details:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write(f"**Chunk-ID:** {selected_chunk['chunk_id']}")
+            st.write(f"**Speaker:** {selected_chunk['speaker_name']} ({selected_chunk['speaker_party']})")
+            st.write(f"**Debatte:** {selected_chunk['debate_title']}")
+            st.write(f"**Datum:** {selected_chunk['debate_date']}")
+            st.write(f"**Pre-Brexit:** {'Ja' if selected_chunk['pre_brexit'] else 'Nein'}")
+        
+        with col2:
+            st.write(f"**Frame:** {selected_chunk['frame_label']}")
+            st.write(f"**Brexit-Position:** {selected_chunk['brexit_position'] or 'Nicht gesetzt'}")
+            st.write(f"**User:** {selected_chunk['assigned_user']}")
+            st.write(f"**Wörter:** {selected_chunk['word_count']}")
+            st.write(f"**Zeichen:** {selected_chunk['char_count']}")
+        
+        st.write("**Chunk-Text:**")
+        st.text_area("", selected_chunk['chunk_text'], height=200, disabled=True)
+        
+        if selected_chunk['annotation_notes']:
+            st.write("**Notizen:**")
+            st.write(selected_chunk['annotation_notes'])
+
 def show_admin_view():
     """Zeigt Admin-Ansicht"""
     st.subheader("👥 Admin-Ansicht")
@@ -1013,7 +1267,7 @@ def main():
         return
     
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Annotation", "📊 Statistiken", "👥 Admin", "⚔️ Konflikte"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Annotation", "📊 Statistiken", "👥 Admin", "⚔️ Konflikte", "📋 Klassifiziert"])
     
     with tab1:
         show_chunk_annotation()
@@ -1026,6 +1280,9 @@ def main():
     
     with tab4:
         show_conflict_resolution()
+    
+    with tab5:
+        show_classified_chunks()
 
 if __name__ == "__main__":
     main()
