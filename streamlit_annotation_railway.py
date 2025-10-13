@@ -14,7 +14,6 @@ from typing import Dict, List, Any, Optional
 import plotly.express as px
 import plotly.graph_objects as go
 import os
-import io
 from psycopg2.extras import RealDictCursor
 
 # Railway PostgreSQL Konfiguration (Fallback für lokale Entwicklung)
@@ -1057,36 +1056,10 @@ def show_classified_chunks():
             filtered_df = pd.DataFrame(filtered_display_data)
             st.dataframe(filtered_df, use_container_width=True, height=400)
     
-    # Export-Optionen
-    st.subheader("📤 Export")
-    
+    # Aktualisieren-Button
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("📄 CSV Export"):
-            csv = df.to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name=f"classified_chunks_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-    
-    with col2:
-        if st.button("📊 Excel Export"):
-            # Erstelle Excel-Datei
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, sheet_name='Klassifizierte Chunks', index=False)
-            
-            st.download_button(
-                label="Download Excel",
-                data=output.getvalue(),
-                file_name=f"classified_chunks_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-    
-    with col3:
         if st.button("🔄 Aktualisieren"):
             st.rerun()
     
