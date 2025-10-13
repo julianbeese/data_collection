@@ -19,6 +19,37 @@ class RailwayToLocalSync:
     def __init__(self, local_duckdb_path: str, postgres_url: str):
         self.local_duckdb_path = local_duckdb_path
         self.postgres_url = postgres_url
+    
+    def ensure_columns_exist(self, duck_conn):
+        """Stellt sicher, dass alle benötigten Spalten in der DuckDB existieren"""
+        print("🔧 Prüfe Spalten in lokaler DuckDB...")
+        
+        try:
+            # Prüfe ob pre_brexit Spalte existiert
+            try:
+                duck_conn.execute("SELECT pre_brexit FROM chunks LIMIT 1")
+            except:
+                print("➕ Füge pre_brexit Spalte hinzu...")
+                duck_conn.execute("ALTER TABLE chunks ADD COLUMN pre_brexit BOOLEAN")
+                # Setze pre_brexit basierend auf debate_date
+                duck_conn.execute("""
+                    UPDATE chunks 
+                    SET pre_brexit = (debate_date < '2016-06-23'::date)
+                    WHERE pre_brexit IS NULL
+                """)
+                print("✅ pre_brexit Spalte hinzugefügt und gefüllt")
+            
+            # Prüfe ob brexit_position Spalte existiert
+            try:
+                duck_conn.execute("SELECT brexit_position FROM chunks LIMIT 1")
+            except:
+                print("➕ Füge brexit_position Spalte hinzu...")
+                duck_conn.execute("ALTER TABLE chunks ADD COLUMN brexit_position VARCHAR(100)")
+                print("✅ brexit_position Spalte hinzugefügt")
+                
+        except Exception as e:
+            print(f"⚠️ Fehler beim Hinzufügen der Spalten: {e}")
+            # Versuche trotzdem fortzufahren
         
     def sync_annotations_from_railway(self):
         """Synchronisiert Annotationen von Railway zurück in lokale DuckDB"""
@@ -26,7 +57,7 @@ class RailwayToLocalSync:
         print("=" * 50)
         
         # Prüfe ob finale DB existiert
-        final_db_path = self.local_duckdb_path.replace("debates_brexit_chunked", "debates_brexit_chunked_final")
+        final_db_path = self.local_duckdb_path.replace("debates_brexit_chunked", "debates_brexit_chunked_synced")
         
         if not Path(final_db_path).exists():
             print(f"📋 Kopiere {self.local_duckdb_path} → {final_db_path}")
@@ -42,6 +73,9 @@ class RailwayToLocalSync:
         # DuckDB Verbindung zur finalen DB
         duck_conn = duckdb.connect(final_db_path)
         
+        # Prüfe und füge neue Spalten hinzu falls nötig
+        self.ensure_columns_exist(duck_conn)
+        
         try:
             # Hole annotierte Chunks von Railway
             print("📥 Lade annotierte Chunks von Railway...")
@@ -51,6 +85,7 @@ class RailwayToLocalSync:
                     debate_title, debate_date, chunk_text, chunk_index, total_chunks,
                     word_count, char_count, chunking_method, assigned_user,
                     frame_label, annotation_confidence, annotation_notes,
+                    pre_brexit, brexit_position,
                     created_at, updated_at
                 FROM chunks 
                 WHERE assigned_user IS NOT NULL
@@ -87,6 +122,8 @@ class RailwayToLocalSync:
                         frame_label = ?,
                         annotation_confidence = ?,
                         annotation_notes = ?,
+                        pre_brexit = ?,
+                        brexit_position = ?,
                         updated_at = ?
                     WHERE chunk_id = ?
                 """, (
@@ -94,6 +131,8 @@ class RailwayToLocalSync:
                     chunk['frame_label'],
                     chunk['annotation_confidence'],
                     chunk['annotation_notes'],
+                    chunk['pre_brexit'],
+                    chunk['brexit_position'],
                     chunk['updated_at'],
                     chunk['chunk_id']
                 ))
@@ -202,6 +241,39 @@ class RailwayToLocalSync:
                 print(f"\nTop Frame-Labels:")
                 for frame_label, count in frame_stats:
                     print(f"  {frame_label:20}: {count:6,} Chunks")
+        except:
+            pass
+        
+        # Brexit-Position Statistiken
+        try:
+            brexit_stats = duck_conn.execute("""
+                SELECT brexit_position, COUNT(*) as count
+                FROM chunks 
+                WHERE brexit_position IS NOT NULL AND brexit_position != ''
+                GROUP BY brexit_position
+                ORDER BY count DESC
+            """).fetchall()
+            
+            if brexit_stats:
+                print(f"\nBrexit-Positionen:")
+                for position, count in brexit_stats:
+                    print(f"  {position:20}: {count:6,} Chunks")
+        except:
+            pass
+        
+        # Pre-Brexit vs Post-Brexit Statistiken
+        try:
+            timing_stats = duck_conn.execute("""
+                SELECT 
+                    COUNT(CASE WHEN pre_brexit = true THEN 1 END) as pre_brexit_count,
+                    COUNT(CASE WHEN pre_brexit = false THEN 1 END) as post_brexit_count
+                FROM chunks
+            """).fetchone()
+            
+            if timing_stats:
+                print(f"\nBrexit-Timing:")
+                print(f"  Pre-Brexit:         {timing_stats[0]:6,} Chunks")
+                print(f"  Post-Brexit:        {timing_stats[1]:6,} Chunks")
         except:
             pass
 
