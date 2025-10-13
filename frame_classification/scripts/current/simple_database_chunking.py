@@ -17,9 +17,12 @@ from functools import partial
 import time
 import random
 
-# Konfiguration
-INPUT_DB = "../../data/processed/debates_brexit_filtered.duckdb"
-OUTPUT_DB = "../../data/processed/debates_brexit_chunked.duckdb"
+# Konfiguration (robuste Pfadauflösung relativ zum Projekt-Root)
+# Dieses Skript liegt unter frame_classification/scripts/current/...
+# Projekt-Root ist drei Ebenen höher
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_INPUT_DB = PROJECT_ROOT / "data/processed/brexit_analysis.duckdb"
+DEFAULT_OUTPUT_DB = PROJECT_ROOT / "data/processed/debates_brexit_chunked.duckdb"
 
 class OptimizedDatabaseChunker:
     def __init__(self):
@@ -200,6 +203,53 @@ def copy_database_complete(input_db: str, output_db: str):
     
     return conn
 
+def copy_database_brexit_subset(input_db: str, output_db: str, min_confidence: float):
+    """Erstellt eine neue DB mit NUR Brexit-relevanten Speeches und referenzierten Debates"""
+    print("Kopiere Brexit-Subset (Speeches + referenzierte Debates)...")
+    start_time = time.time()
+    
+    # Lösche Output-DB falls vorhanden
+    out_path = Path(output_db)
+    if out_path.exists():
+        out_path.unlink()
+    
+    conn = duckdb.connect(output_db)
+    conn.execute(f"ATTACH '{input_db}' AS source_db (READ_ONLY)")
+    
+    # Speeches (gefiltert)
+    print("  • Erstelle Tabelle 'speeches' (Brexit-gefiltert)...")
+    conn.execute(f"""
+        CREATE TABLE speeches AS
+        SELECT *
+        FROM source_db.speeches s
+        WHERE s.llm_processed = TRUE
+          AND s.llm_classified_brexit = TRUE
+          AND (s.llm_confidence_score IS NULL OR s.llm_confidence_score >= {min_confidence})
+    """)
+    
+    # Debates (nur referenzierte)
+    print("  • Erstelle Tabelle 'debates' (nur referenzierte Einträge)...")
+    conn.execute("""
+        CREATE TABLE debates AS
+        SELECT *
+        FROM source_db.debates d
+        WHERE d.debate_id IN (SELECT DISTINCT debate_id FROM speeches WHERE debate_id IS NOT NULL)
+    """)
+    
+    # Optional: weitere Tabellen bei Bedarf hinzufügen
+    # Aktuell nutzt das Skript nur speeches und debates
+    
+    conn.execute("DETACH source_db")
+    
+    # Verifikation
+    speech_count = conn.execute("SELECT COUNT(*) FROM speeches").fetchone()[0]
+    debate_count = conn.execute("SELECT COUNT(*) FROM debates").fetchone()[0]
+    print(f"  ✓ {speech_count:,} Brexit-Speeches, {debate_count:,} referenzierte Debates")
+    
+    elapsed = time.time() - start_time
+    print(f"✓ Brexit-Subset erstellt in {elapsed:.2f} Sekunden")
+    return conn
+
 def assign_chunks_for_annotation(conn, total_chunks: int):
     """Weist genau 1.000 Chunks für Doppel-Annotation zu"""
     print("\n" + "=" * 70)
@@ -340,11 +390,13 @@ def assign_chunks_for_annotation(conn, total_chunks: int):
 
 def main():
     parser = argparse.ArgumentParser(description='Optimiertes Datenbank-Chunking')
-    parser.add_argument('--input-db', default=INPUT_DB, help='Pfad zur Input-Datenbank')
-    parser.add_argument('--output-db', default=OUTPUT_DB, help='Pfad zur Output-Datenbank')
+    parser.add_argument('--input-db', default=str(DEFAULT_INPUT_DB), help='Pfad zur Input-Datenbank')
+    parser.add_argument('--output-db', default=str(DEFAULT_OUTPUT_DB), help='Pfad zur Output-Datenbank')
     parser.add_argument('--max-speeches', type=int, help='Maximale Anzahl Reden (für Tests)')
     parser.add_argument('--batch-size', type=int, default=1000, help='Batch-Größe für Verarbeitung')
     parser.add_argument('--workers', type=int, default=mp.cpu_count(), help='Anzahl paralleler Worker')
+    parser.add_argument('--filter-brexit', action='store_true', help='Nur als Brexit-relevant klassifizierte Speeches verarbeiten')
+    parser.add_argument('--min-confidence', type=float, default=0.0, help='Mindest-Confidence für Brexit-Klassifikation (0.0-1.0)')
     
     args = parser.parse_args()
     
@@ -363,8 +415,11 @@ def main():
     
     total_start = time.time()
     
-    # SCHRITT 1: Kopiere KOMPLETTE Datenbank
-    conn = copy_database_complete(args.input_db, args.output_db)
+    # SCHRITT 1: Kopiere Datenbank (vollständig oder Brexit-Subset)
+    if args.filter_brexit:
+        conn = copy_database_brexit_subset(args.input_db, args.output_db, args.min_confidence)
+    else:
+        conn = copy_database_complete(args.input_db, args.output_db)
     
     # SCHRITT 2: Erstelle NEUE Chunks-Tabelle
     print("\nErstelle NEUE Chunks-Tabelle...")
@@ -394,42 +449,33 @@ def main():
     conn.execute(create_chunks_sql)
     print("✓ Chunks-Tabelle erstellt")
     
-    # SCHRITT 3: Lade ALLE Speeches
+    # SCHRITT 3: Lade ALLE (optional: Brexit-relevante) Speeches
     print("\nLade Speeches für Chunking...")
     start_time = time.time()
     
+    # Optionales Brexit-Filter: Wenn wir bereits ein Subset kopiert haben, ist keine WHERE-Bedingung nötig
+    brexit_where = ""
+    if args.filter_brexit:
+        print(f"  (Filter aktiv: Brexit-relevant, min. Confidence {args.min_confidence}) - Subset bereits erstellt")
+    
+    base_select = (
+        "SELECT \n"
+        "    s.speech_id,\n"
+        "    s.debate_id,\n"
+        "    s.speaker_name,\n"
+        "    s.speaker_office,\n"
+        "    s.speech_text,\n"
+        "    s.time,\n"
+        "    d.major_heading_text,\n"
+        "    d.date\n"
+        "FROM speeches s\n"
+        "LEFT JOIN debates d ON s.debate_id = d.debate_id"
+    )
+    order_clause = "\nORDER BY s.speech_id"
+    limit_clause = f"\nLIMIT {args.max_speeches}" if args.max_speeches else ""
     if args.max_speeches:
-        query = f"""
-        SELECT 
-            s.speech_id,
-            s.debate_id,
-            s.speaker_name,
-            s.speaker_office,
-            s.speech_text,
-            s.time,
-            d.major_heading_text,
-            d.date
-        FROM speeches s
-        LEFT JOIN debates d ON s.debate_id = d.debate_id
-        ORDER BY s.speech_id
-        LIMIT {args.max_speeches}
-        """
         print(f"  (Limitiert auf {args.max_speeches} Speeches für Test)")
-    else:
-        query = """
-        SELECT 
-            s.speech_id,
-            s.debate_id,
-            s.speaker_name,
-            s.speaker_office,
-            s.speech_text,
-            s.time,
-            d.major_heading_text,
-            d.date
-        FROM speeches s
-        LEFT JOIN debates d ON s.debate_id = d.debate_id
-        ORDER BY s.speech_id
-        """
+    query = base_select + brexit_where + order_clause + limit_clause
     
     speeches = conn.execute(query).fetchall()
     print(f"✓ {len(speeches)} Speeches geladen in {time.time() - start_time:.2f} Sekunden")

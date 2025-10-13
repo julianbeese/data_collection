@@ -525,6 +525,247 @@ def show_chunk_annotation():
         st.session_state.current_chunk_index = new_index - 1
         st.rerun()
 
+def get_annotation_conflicts() -> List[Dict[str, Any]]:
+    """Erkennt Annotation-Konflikte zwischen verschiedenen Usern"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Suche nach Chunks, die von mehreren Usern unterschiedlich annotiert wurden
+        # Dies ist eine vereinfachte Annahme - in der Realität müsste man eine separate
+        # Annotation-History-Tabelle haben, um echte Konflikte zu erkennen
+        cursor.execute("""
+            SELECT 
+                c1.chunk_id,
+                c1.speech_id,
+                c1.speaker_name,
+                c1.speaker_party,
+                c1.debate_title,
+                c1.debate_date,
+                c1.chunk_text,
+                c1.frame_label as current_frame,
+                c1.brexit_position as current_brexit,
+                c1.assigned_user as current_user,
+                c1.annotation_notes as current_notes,
+                c1.updated_at as current_updated
+            FROM chunks c1
+            WHERE c1.frame_label IS NOT NULL 
+            AND c1.assigned_user IS NOT NULL
+            ORDER BY c1.updated_at DESC
+        """)
+        
+        chunks = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Konvertiere zu Dictionary-Liste
+        chunk_list = []
+        for chunk in chunks:
+            chunk_dict = dict(chunk)
+            chunk_list.append(chunk_dict)
+        
+        return chunk_list
+        
+    except Exception as e:
+        st.error(f"Fehler beim Laden der Konflikte: {e}")
+        if conn:
+            conn.close()
+        return []
+
+def resolve_conflict(chunk_id: str, final_frame: str, final_brexit: str, final_notes: str, resolved_by: str):
+    """Löst einen Annotation-Konflikt durch finale Entscheidung"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Aktualisiere die Annotation mit der finalen Entscheidung
+        update_sql = """
+        UPDATE chunks 
+        SET frame_label = %s, brexit_position = %s, annotation_notes = %s, 
+            assigned_user = %s, updated_at = CURRENT_TIMESTAMP
+        WHERE chunk_id = %s
+        """
+        
+        cursor.execute(update_sql, (final_frame, final_brexit, final_notes, resolved_by, chunk_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Fehler beim Lösen des Konflikts: {e}")
+        if conn:
+            conn.rollback()
+            conn.close()
+        return False
+
+def show_conflict_resolution():
+    """Zeigt Interface zur Konfliktlösung"""
+    st.subheader("⚔️ Annotation-Konflikte")
+    st.markdown("Übersicht über potenzielle Annotation-Konflikte und deren Lösung")
+    
+    # Lade alle annotierten Chunks
+    conflicts = get_annotation_conflicts()
+    
+    if not conflicts:
+        st.info("Keine Konflikte gefunden. Alle Annotationen sind konsistent.")
+        return
+    
+    st.write(f"**Gefundene annotierte Chunks:** {len(conflicts)}")
+    
+    # Filter-Optionen
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        frame_filter = st.selectbox(
+            "Frame-Filter:",
+            options=["Alle"] + FRAME_CATEGORIES,
+            key="conflict_frame_filter"
+        )
+    
+    with col2:
+        user_filter = st.selectbox(
+            "User-Filter:",
+            options=["Alle"] + list(set([c['current_user'] for c in conflicts if c['current_user']])),
+            key="conflict_user_filter"
+        )
+    
+    with col3:
+        brexit_filter = st.selectbox(
+            "Brexit-Position Filter:",
+            options=["Alle"] + BREXIT_POSITION_CATEGORIES,
+            key="conflict_brexit_filter"
+        )
+    
+    # Filtere Konflikte
+    filtered_conflicts = conflicts
+    
+    if frame_filter != "Alle":
+        filtered_conflicts = [c for c in filtered_conflicts if c['current_frame'] == frame_filter]
+    
+    if user_filter != "Alle":
+        filtered_conflicts = [c for c in filtered_conflicts if c['current_user'] == user_filter]
+    
+    if brexit_filter != "Alle":
+        filtered_conflicts = [c for c in filtered_conflicts if c['current_brexit'] == brexit_filter]
+    
+    st.write(f"**Gefilterte Chunks:** {len(filtered_conflicts)}")
+    
+    if not filtered_conflicts:
+        st.info("Keine Chunks entsprechen den Filterkriterien.")
+        return
+    
+    # Zeige Konflikte
+    for i, conflict in enumerate(filtered_conflicts):
+        with st.expander(f"Chunk {i+1}: {conflict['chunk_id'][:20]}... - {conflict['current_frame']} ({conflict['current_user']})"):
+            
+            # Chunk-Informationen
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.write(f"**Speaker:** {conflict['speaker_name']} ({conflict['speaker_party']})")
+            with col2:
+                st.write(f"**Datum:** {conflict['debate_date']}")
+            with col3:
+                st.write(f"**User:** {conflict['current_user']}")
+            
+            # Aktuelle Annotation
+            st.subheader("📝 Aktuelle Annotation")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Frame:** {conflict['current_frame']}")
+                st.write(f"**Brexit-Position:** {conflict['current_brexit'] or 'Nicht gesetzt'}")
+            with col2:
+                st.write(f"**Notizen:** {conflict['current_notes'] or 'Keine Notizen'}")
+                st.write(f"**Letzte Aktualisierung:** {conflict['current_updated']}")
+            
+            # Chunk-Text
+            st.subheader("📄 Chunk-Text")
+            st.text_area("", conflict['chunk_text'], height=150, disabled=True, key=f"text_{conflict['chunk_id']}")
+            
+            # Konfliktlösung
+            st.subheader("🔧 Konfliktlösung")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Neue Annotation:**")
+                new_frame = st.selectbox(
+                    "Frame-Kategorie:",
+                    options=FRAME_CATEGORIES,
+                    index=FRAME_CATEGORIES.index(conflict['current_frame']) if conflict['current_frame'] in FRAME_CATEGORIES else 0,
+                    key=f"new_frame_{conflict['chunk_id']}"
+                )
+                
+                new_brexit = st.selectbox(
+                    "Brexit-Position:",
+                    options=BREXIT_POSITION_CATEGORIES,
+                    index=BREXIT_POSITION_CATEGORIES.index(conflict['current_brexit']) if conflict['current_brexit'] in BREXIT_POSITION_CATEGORIES else 0,
+                    key=f"new_brexit_{conflict['chunk_id']}"
+                )
+            
+            with col2:
+                new_notes = st.text_area(
+                    "Notizen:",
+                    value=conflict['current_notes'] or "",
+                    key=f"new_notes_{conflict['chunk_id']}"
+                )
+                
+                resolved_by = st.text_input(
+                    "Gelöst von:",
+                    value=st.session_state.user_name or "",
+                    key=f"resolved_by_{conflict['chunk_id']}"
+                )
+            
+            # Aktions-Buttons
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("✅ Konflikt lösen", key=f"resolve_{conflict['chunk_id']}", type="primary"):
+                    if new_frame and resolved_by:
+                        success = resolve_conflict(
+                            conflict['chunk_id'], 
+                            new_frame, 
+                            new_brexit, 
+                            new_notes, 
+                            resolved_by
+                        )
+                        if success:
+                            st.success("✅ Konflikt erfolgreich gelöst!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Fehler beim Lösen des Konflikts!")
+                    else:
+                        st.error("Bitte fülle alle erforderlichen Felder aus!")
+            
+            with col2:
+                if st.button("🔄 Aktualisieren", key=f"refresh_{conflict['chunk_id']}"):
+                    st.rerun()
+            
+            with col3:
+                if st.button("🗑️ Annotation entfernen", key=f"delete_{conflict['chunk_id']}"):
+                    if st.session_state.user_name:
+                        success = resolve_conflict(
+                            conflict['chunk_id'], 
+                            None, 
+                            None, 
+                            f"Annotation entfernt von {st.session_state.user_name}", 
+                            st.session_state.user_name
+                        )
+                        if success:
+                            st.success("✅ Annotation entfernt!")
+                            st.rerun()
+                        else:
+                            st.error("❌ Fehler beim Entfernen der Annotation!")
+                    else:
+                        st.error("Bitte gib deinen Namen ein!")
+
 def show_admin_view():
     """Zeigt Admin-Ansicht"""
     st.subheader("👥 Admin-Ansicht")
@@ -669,7 +910,7 @@ def main():
         return
     
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["📝 Annotation", "📊 Statistiken", "👥 Admin"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Annotation", "📊 Statistiken", "👥 Admin", "⚔️ Konflikte"])
     
     with tab1:
         show_chunk_annotation()
@@ -679,6 +920,9 @@ def main():
     
     with tab3:
         show_admin_view()
+    
+    with tab4:
+        show_conflict_resolution()
 
 if __name__ == "__main__":
     main()
