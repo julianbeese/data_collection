@@ -154,7 +154,7 @@ def create_tables_if_not_exist():
         if conn:
             conn.close()
 
-def load_database_chunks(user_name: str = None, limit: int = None) -> List[Dict[str, Any]]:
+def load_database_chunks(user_name: str = None, limit: int = None, only_unannotated: bool = True) -> List[Dict[str, Any]]:
     """Lädt Chunks aus PostgreSQL für einen bestimmten User"""
     conn = get_db_connection()
     if not conn:
@@ -164,22 +164,42 @@ def load_database_chunks(user_name: str = None, limit: int = None) -> List[Dict[
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
         if user_name:
-            # Lade nur Chunks für den spezifischen User
-            if limit:
-                query = """
-                SELECT * FROM chunks 
-                WHERE assigned_user = %s
-                ORDER BY chunk_id 
-                LIMIT %s
-                """
-                cursor.execute(query, (user_name, limit))
+            if only_unannotated:
+                # Lade nur unklassifizierte Chunks für den spezifischen User
+                if limit:
+                    query = """
+                    SELECT * FROM chunks 
+                    WHERE assigned_user = %s 
+                    AND (frame_label IS NULL OR frame_label = '')
+                    ORDER BY chunk_id 
+                    LIMIT %s
+                    """
+                    cursor.execute(query, (user_name, limit))
+                else:
+                    query = """
+                    SELECT * FROM chunks 
+                    WHERE assigned_user = %s 
+                    AND (frame_label IS NULL OR frame_label = '')
+                    ORDER BY chunk_id
+                    """
+                    cursor.execute(query, (user_name,))
             else:
-                query = """
-                SELECT * FROM chunks 
-                WHERE assigned_user = %s
-                ORDER BY chunk_id
-                """
-                cursor.execute(query, (user_name,))
+                # Lade alle Chunks für den spezifischen User (inkl. klassifizierte)
+                if limit:
+                    query = """
+                    SELECT * FROM chunks 
+                    WHERE assigned_user = %s
+                    ORDER BY chunk_id 
+                    LIMIT %s
+                    """
+                    cursor.execute(query, (user_name, limit))
+                else:
+                    query = """
+                    SELECT * FROM chunks 
+                    WHERE assigned_user = %s
+                    ORDER BY chunk_id
+                    """
+                    cursor.execute(query, (user_name,))
         else:
             # Lade alle unzugewiesenen Chunks (für Admin-View)
             if limit:
@@ -554,6 +574,7 @@ def get_annotation_conflicts() -> List[Dict[str, Any]]:
             FROM chunks c1
             WHERE c1.frame_label IS NOT NULL 
             AND c1.assigned_user IS NOT NULL
+            AND c1.frame_label != ''
             ORDER BY c1.updated_at DESC
         """)
         
@@ -888,15 +909,25 @@ def main():
             help="Anzahl der Chunks zum Laden"
         )
         
+        # Chunk-Typ Auswahl
+        chunk_type = st.radio(
+            "📝 Chunk-Typ:",
+            options=["Nur unklassifizierte", "Alle Chunks"],
+            help="Wähle ob nur unklassifizierte Chunks oder alle Chunks geladen werden sollen"
+        )
+        only_unannotated = chunk_type == "Nur unklassifizierte"
+        
         # Lade Chunks
         if st.button("🔄 Chunks laden"):
             if not st.session_state.user_name:
                 st.error("Bitte gib zuerst deinen Namen ein!")
             else:
                 with st.spinner("Lade Chunks aus PostgreSQL..."):
-                    st.session_state.chunks = load_database_chunks(st.session_state.user_name, chunk_limit)
+                    st.session_state.chunks = load_database_chunks(st.session_state.user_name, chunk_limit, only_unannotated)
                     st.session_state.current_chunk_index = 0
-                st.success(f"✓ {len(st.session_state.chunks)} Chunks für {st.session_state.user_name} geladen!")
+                
+                chunk_type_text = "unklassifizierte" if only_unannotated else "alle"
+                st.success(f"✓ {len(st.session_state.chunks)} {chunk_type_text} Chunks für {st.session_state.user_name} geladen!")
         
         st.divider()
         
@@ -907,6 +938,7 @@ def main():
     # Hauptbereich
     if not st.session_state.chunks:
         st.info("👆 Lade zuerst Chunks aus der Datenbank!")
+        st.info("💡 **Tipp:** Wähle 'Nur unklassifizierte' um nur noch zu klassifizierende Chunks zu laden.")
         return
     
     # Tabs
