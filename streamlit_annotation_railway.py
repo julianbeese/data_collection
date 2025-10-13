@@ -924,97 +924,9 @@ def show_classified_chunks():
     
     st.write(f"**Gesamt klassifizierte Chunks:** {len(chunks)}")
     
-    # Filter-Optionen
-    st.subheader("🔍 Filter & Suche")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        frame_filter = st.selectbox(
-            "Frame-Kategorie:",
-            options=["Alle"] + FRAME_CATEGORIES,
-            key="classified_frame_filter"
-        )
-    
-    with col2:
-        user_filter = st.selectbox(
-            "User:",
-            options=["Alle"] + list(set([c['assigned_user'] for c in chunks if c['assigned_user']])),
-            key="classified_user_filter"
-        )
-    
-    with col3:
-        brexit_filter = st.selectbox(
-            "Brexit-Position:",
-            options=["Alle"] + BREXIT_POSITION_CATEGORIES,
-            key="classified_brexit_filter"
-        )
-    
-    with col4:
-        speaker_filter = st.selectbox(
-            "Speaker:",
-            options=["Alle"] + list(set([c['speaker_name'] for c in chunks if c['speaker_name']])),
-            key="classified_speaker_filter"
-        )
-    
-    # Zusätzliche Filter
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        pre_brexit_filter = st.selectbox(
-            "Brexit-Timing:",
-            options=["Alle", "Pre-Brexit", "Post-Brexit"],
-            key="classified_timing_filter"
-        )
-    
-    with col2:
-        search_text = st.text_input(
-            "Text-Suche:",
-            placeholder="Suche in Chunk-Text...",
-            key="classified_text_search"
-        )
-    
-    with col3:
-        date_from = st.date_input(
-            "Von Datum:",
-            key="classified_date_from"
-        )
-    
-    # Filtere Chunks
-    filtered_chunks = chunks
-    
-    if frame_filter != "Alle":
-        filtered_chunks = [c for c in filtered_chunks if c['frame_label'] == frame_filter]
-    
-    if user_filter != "Alle":
-        filtered_chunks = [c for c in filtered_chunks if c['assigned_user'] == user_filter]
-    
-    if brexit_filter != "Alle":
-        filtered_chunks = [c for c in filtered_chunks if c['brexit_position'] == brexit_filter]
-    
-    if speaker_filter != "Alle":
-        filtered_chunks = [c for c in filtered_chunks if c['speaker_name'] == speaker_filter]
-    
-    if pre_brexit_filter == "Pre-Brexit":
-        filtered_chunks = [c for c in filtered_chunks if c['pre_brexit'] == True]
-    elif pre_brexit_filter == "Post-Brexit":
-        filtered_chunks = [c for c in filtered_chunks if c['pre_brexit'] == False]
-    
-    if search_text:
-        filtered_chunks = [c for c in filtered_chunks if search_text.lower() in c['chunk_text'].lower()]
-    
-    if date_from:
-        filtered_chunks = [c for c in filtered_chunks if c['debate_date'] >= date_from]
-    
-    st.write(f"**Gefilterte Chunks:** {len(filtered_chunks)}")
-    
-    if not filtered_chunks:
-        st.info("Keine Chunks entsprechen den Filterkriterien.")
-        return
-    
-    # Erstelle DataFrame für bessere Darstellung
+    # Erstelle DataFrame für bessere Darstellung (alle Chunks)
     display_data = []
-    for chunk in filtered_chunks:
+    for chunk in chunks:
         display_data.append({
             'Chunk-ID': chunk['chunk_id'][:20] + '...' if len(chunk['chunk_id']) > 20 else chunk['chunk_id'],
             'Speaker': chunk['speaker_name'],
@@ -1031,8 +943,8 @@ def show_classified_chunks():
     
     df = pd.DataFrame(display_data)
     
-    # Zeige Tabelle
-    st.subheader("📊 Klassifizierte Chunks Tabelle")
+    # Zeige Tabelle (alle Chunks)
+    st.subheader("📊 Alle klassifizierten Chunks")
     
     # Sortierbare Tabelle
     st.dataframe(
@@ -1040,6 +952,110 @@ def show_classified_chunks():
         use_container_width=True,
         height=600
     )
+    
+    # Filter-Optionen (optional)
+    with st.expander("🔍 Filter & Suche (optional)"):
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            frame_filter = st.selectbox(
+                "Frame-Kategorie:",
+                options=["Alle"] + FRAME_CATEGORIES,
+                key="classified_frame_filter"
+            )
+        
+        with col2:
+            user_filter = st.selectbox(
+                "User:",
+                options=["Alle"] + list(set([c['assigned_user'] for c in chunks if c['assigned_user']])),
+                key="classified_user_filter"
+            )
+        
+        with col3:
+            brexit_filter = st.selectbox(
+                "Brexit-Position:",
+                options=["Alle"] + BREXIT_POSITION_CATEGORIES,
+                key="classified_brexit_filter"
+            )
+        
+        with col4:
+            speaker_filter = st.selectbox(
+                "Speaker:",
+                options=["Alle"] + list(set([c['speaker_name'] for c in chunks if c['speaker_name']])),
+                key="classified_speaker_filter"
+            )
+        
+        # Zusätzliche Filter
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            pre_brexit_filter = st.selectbox(
+                "Brexit-Timing:",
+                options=["Alle", "Pre-Brexit", "Post-Brexit"],
+                key="classified_timing_filter"
+            )
+        
+        with col2:
+            search_text = st.text_input(
+                "Text-Suche:",
+                placeholder="Suche in Chunk-Text...",
+                key="classified_text_search"
+            )
+        
+        with col3:
+            date_from = st.date_input(
+                "Von Datum:",
+                key="classified_date_from"
+            )
+        
+        # Filtere Chunks
+        filtered_chunks = chunks
+        
+        if frame_filter != "Alle":
+            filtered_chunks = [c for c in filtered_chunks if c['frame_label'] == frame_filter]
+        
+        if user_filter != "Alle":
+            filtered_chunks = [c for c in filtered_chunks if c['assigned_user'] == user_filter]
+        
+        if brexit_filter != "Alle":
+            filtered_chunks = [c for c in filtered_chunks if c['brexit_position'] == brexit_filter]
+        
+        if speaker_filter != "Alle":
+            filtered_chunks = [c for c in filtered_chunks if c['speaker_name'] == speaker_filter]
+        
+        if pre_brexit_filter == "Pre-Brexit":
+            filtered_chunks = [c for c in filtered_chunks if c['pre_brexit'] == True]
+        elif pre_brexit_filter == "Post-Brexit":
+            filtered_chunks = [c for c in filtered_chunks if c['pre_brexit'] == False]
+        
+        if search_text:
+            filtered_chunks = [c for c in filtered_chunks if search_text.lower() in c['chunk_text'].lower()]
+        
+        if date_from:
+            filtered_chunks = [c for c in filtered_chunks if c['debate_date'] >= date_from]
+        
+        st.write(f"**Gefilterte Chunks:** {len(filtered_chunks)}")
+        
+        if len(filtered_chunks) != len(chunks):
+            # Zeige gefilterte Tabelle
+            filtered_display_data = []
+            for chunk in filtered_chunks:
+                filtered_display_data.append({
+                    'Chunk-ID': chunk['chunk_id'][:20] + '...' if len(chunk['chunk_id']) > 20 else chunk['chunk_id'],
+                    'Speaker': chunk['speaker_name'],
+                    'Party': chunk['speaker_party'],
+                    'Frame': chunk['frame_label'],
+                    'Brexit-Pos': chunk['brexit_position'] or 'N/A',
+                    'User': chunk['assigned_user'],
+                    'Wörter': chunk['word_count'],
+                    'Datum': chunk['debate_date'],
+                    'Pre-Brexit': 'Ja' if chunk['pre_brexit'] else 'Nein',
+                    'Notizen': chunk['annotation_notes'][:50] + '...' if chunk['annotation_notes'] and len(chunk['annotation_notes']) > 50 else chunk['annotation_notes'] or '',
+                    'Aktualisiert': chunk['updated_at'].strftime('%Y-%m-%d %H:%M') if chunk['updated_at'] else 'N/A'
+                })
+            
+            filtered_df = pd.DataFrame(filtered_display_data)
+            st.dataframe(filtered_df, use_container_width=True, height=400)
     
     # Export-Optionen
     st.subheader("📤 Export")
@@ -1079,13 +1095,13 @@ def show_classified_chunks():
     
     selected_chunk_id = st.selectbox(
         "Wähle einen Chunk für Details:",
-        options=[c['chunk_id'] for c in filtered_chunks],
-        format_func=lambda x: f"{x[:20]}... - {next(c['frame_label'] for c in filtered_chunks if c['chunk_id'] == x)}",
+        options=[c['chunk_id'] for c in chunks],
+        format_func=lambda x: f"{x[:20]}... - {next(c['frame_label'] for c in chunks if c['chunk_id'] == x)}",
         key="detailed_chunk_selector"
     )
     
     if selected_chunk_id:
-        selected_chunk = next(c for c in filtered_chunks if c['chunk_id'] == selected_chunk_id)
+        selected_chunk = next(c for c in chunks if c['chunk_id'] == selected_chunk_id)
         
         st.write("**Chunk-Details:**")
         
