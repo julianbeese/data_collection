@@ -766,6 +766,102 @@ def resolve_conflict(chunk_id: str, final_frame: str, final_brexit: str, final_n
             conn.close()
         return False
 
+def get_double_classification_stats() -> Dict[str, Any]:
+    """Berechnet Statistiken über doppelt klassifizierte Chunks"""
+    conn = get_db_connection()
+    if not conn:
+        return {}
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Doppelt klassifizierte Chunks (mehrere User haben denselben Chunk annotiert)
+        cursor.execute("""
+            WITH user_annotation_counts AS (
+                SELECT 
+                    chunk_id,
+                    COUNT(DISTINCT user_name) as user_count,
+                    COUNT(*) as total_annotations
+                FROM annotation_history
+                WHERE frame_label IS NOT NULL AND frame_label != ''
+                GROUP BY chunk_id
+                HAVING COUNT(DISTINCT user_name) > 1
+            ),
+            double_classified_details AS (
+                SELECT 
+                    c.chunk_id,
+                    c.speech_id,
+                    c.speaker_name,
+                    c.speaker_party,
+                    c.debate_title,
+                    c.debate_date,
+                    c.chunk_text,
+                    uac.user_count,
+                    uac.total_annotations,
+                    STRING_AGG(DISTINCT ah.user_name, ', ') as annotators,
+                    STRING_AGG(DISTINCT ah.frame_label, ', ') as frame_labels,
+                    STRING_AGG(DISTINCT ah.brexit_position, ', ') as brexit_positions
+                FROM user_annotation_counts uac
+                JOIN chunks c ON uac.chunk_id = c.chunk_id
+                JOIN annotation_history ah ON c.chunk_id = ah.chunk_id
+                WHERE ah.frame_label IS NOT NULL AND ah.frame_label != ''
+                GROUP BY c.chunk_id, c.speech_id, c.speaker_name, c.speaker_party, 
+                         c.debate_title, c.debate_date, c.chunk_text, uac.user_count, uac.total_annotations
+            )
+            SELECT 
+                COUNT(*) as total_double_classified,
+                AVG(user_count) as avg_users_per_chunk,
+                MAX(user_count) as max_users_per_chunk,
+                COUNT(CASE WHEN user_count = 2 THEN 1 END) as double_classified,
+                COUNT(CASE WHEN user_count = 3 THEN 1 END) as triple_classified,
+                COUNT(CASE WHEN user_count > 3 THEN 1 END) as more_than_triple
+            FROM double_classified_details
+        """)
+        
+        stats = cursor.fetchone()
+        
+        # Zusätzliche Details für die Anzeige
+        cursor.execute("""
+            WITH user_annotation_counts AS (
+                SELECT 
+                    chunk_id,
+                    COUNT(DISTINCT user_name) as user_count
+                FROM annotation_history
+                WHERE frame_label IS NOT NULL AND frame_label != ''
+                GROUP BY chunk_id
+                HAVING COUNT(DISTINCT user_name) > 1
+            )
+            SELECT 
+                ah.user_name,
+                COUNT(DISTINCT uac.chunk_id) as chunks_double_classified
+            FROM user_annotation_counts uac
+            JOIN annotation_history ah ON uac.chunk_id = ah.chunk_id
+            WHERE ah.frame_label IS NOT NULL AND ah.frame_label != ''
+            GROUP BY ah.user_name
+            ORDER BY chunks_double_classified DESC
+        """)
+        
+        user_stats = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            'total_double_classified': stats[0] or 0,
+            'avg_users_per_chunk': float(stats[1]) if stats[1] else 0,
+            'max_users_per_chunk': stats[2] or 0,
+            'double_classified': stats[3] or 0,
+            'triple_classified': stats[4] or 0,
+            'more_than_triple': stats[5] or 0,
+            'by_user': {user: count for user, count in user_stats}
+        }
+        
+    except Exception as e:
+        st.error(f"Fehler beim Laden der Doppelklassifizierungs-Statistiken: {e}")
+        if conn:
+            conn.close()
+        return {}
+
 def show_conflict_resolution():
     """Zeigt Interface zur Konfliktlösung"""
     st.subheader("⚔️ Annotation-Konflikte")
@@ -773,6 +869,60 @@ def show_conflict_resolution():
     
     # Lade echte Konflikte
     conflicts = get_annotation_conflicts()
+    
+    # Lade Doppelklassifizierungs-Statistiken
+    double_stats = get_double_classification_stats()
+    
+    # Zeige Statistiken über doppelt klassifizierte Einträge
+    if double_stats and double_stats.get('total_double_classified', 0) > 0:
+        st.subheader("📊 Doppelklassifizierungs-Statistiken")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Doppelt klassifiziert", 
+                f"{double_stats['total_double_classified']:,}",
+                help="Chunks, die von mehreren Usern klassifiziert wurden"
+            )
+        
+        with col2:
+            st.metric(
+                "Durchschnitt User/Chunk", 
+                f"{double_stats['avg_users_per_chunk']:.1f}",
+                help="Durchschnittliche Anzahl User pro doppelt klassifiziertem Chunk"
+            )
+        
+        with col3:
+            st.metric(
+                "Max User/Chunk", 
+                f"{double_stats['max_users_per_chunk']}",
+                help="Maximale Anzahl User für einen einzelnen Chunk"
+            )
+        
+        with col4:
+            st.metric(
+                "Nur 2 User", 
+                f"{double_stats['double_classified']:,}",
+                help="Chunks mit genau 2 klassifizierenden Usern"
+            )
+        
+        # Detaillierte Aufschlüsselung
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Aufschlüsselung nach User-Anzahl:**")
+            st.write(f"- 2 User: {double_stats['double_classified']:,} Chunks")
+            st.write(f"- 3 User: {double_stats['triple_classified']:,} Chunks")
+            st.write(f"- 4+ User: {double_stats['more_than_triple']:,} Chunks")
+        
+        with col2:
+            if double_stats.get('by_user'):
+                st.write("**Top User bei Doppelklassifizierungen:**")
+                for user, count in list(double_stats['by_user'].items())[:5]:
+                    st.write(f"- **{user}**: {count:,} Chunks")
+        
+        st.divider()
     
     if not conflicts:
         st.info("🎉 Keine Konflikte gefunden! Alle Annotationen sind konsistent.")
