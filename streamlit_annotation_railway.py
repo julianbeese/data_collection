@@ -1004,14 +1004,12 @@ def show_conflict_resolution():
                 st.write(f"**Chunk:** {conflict['original_chunk']}")
                 st.write(f"**Frame:** {conflict['frame1']}")
                 st.write(f"**Notizen:** {conflict['notes1'] or 'Keine Notizen'}")
-                st.write(f"**Datum:** {conflict['created1']}")
             
             with col2:
                 st.markdown("### 👤 **User 2: " + conflict['user2'] + "**")
                 st.write(f"**Chunk:** {conflict['dup_chunk']}")
                 st.write(f"**Frame:** {conflict['frame2']}")
                 st.write(f"**Notizen:** {conflict['notes2'] or 'Keine Notizen'}")
-                st.write(f"**Datum:** {conflict['created2']}")
             
             # Konfliktlösung
             st.subheader("🔧 Konfliktlösung")
