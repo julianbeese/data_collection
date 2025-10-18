@@ -989,8 +989,7 @@ def show_classified_chunks():
             'Wörter': chunk['word_count'],
             'Datum': chunk['debate_date'],
             'Pre-Brexit': 'Ja' if chunk['pre_brexit'] else 'Nein',
-            'Notizen': chunk['annotation_notes'][:50] + '...' if chunk['annotation_notes'] and len(chunk['annotation_notes']) > 50 else chunk['annotation_notes'] or '',
-            'Aktualisiert': chunk['updated_at'].strftime('%Y-%m-%d %H:%M') if chunk['updated_at'] else 'N/A'
+            'Notizen': chunk['annotation_notes'][:50] + '...' if chunk['annotation_notes'] and len(chunk['annotation_notes']) > 50 else chunk['annotation_notes'] or ''
         })
     
     df = pd.DataFrame(display_data)
@@ -1102,8 +1101,7 @@ def show_classified_chunks():
                     'Wörter': chunk['word_count'],
                     'Datum': chunk['debate_date'],
                     'Pre-Brexit': 'Ja' if chunk['pre_brexit'] else 'Nein',
-                    'Notizen': chunk['annotation_notes'][:50] + '...' if chunk['annotation_notes'] and len(chunk['annotation_notes']) > 50 else chunk['annotation_notes'] or '',
-                    'Aktualisiert': chunk['updated_at'].strftime('%Y-%m-%d %H:%M') if chunk['updated_at'] else 'N/A'
+                    'Notizen': chunk['annotation_notes'][:50] + '...' if chunk['annotation_notes'] and len(chunk['annotation_notes']) > 50 else chunk['annotation_notes'] or ''
                 })
             
             filtered_df = pd.DataFrame(filtered_display_data)
