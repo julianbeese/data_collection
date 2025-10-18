@@ -621,7 +621,7 @@ def get_classified_chunks() -> List[Dict[str, Any]]:
         return []
 
 def get_annotation_conflicts() -> List[Dict[str, Any]]:
-    """Erkennt echte Annotation-Konflikte zwischen verschiedenen Usern"""
+    """Erkennt echte Annotation-Konflikte zwischen verschiedenen Usern (inkl. _dup Chunks)"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -629,91 +629,38 @@ def get_annotation_conflicts() -> List[Dict[str, Any]]:
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Erweiterte Konflikterkennung: Annotation History + Doppelt klassifizierte Chunks
+        # Konflikterkennung für Original vs _dup Chunks (nur Frame-Labels)
         cursor.execute("""
-            WITH user_annotations AS (
+            WITH chunk_pairs AS (
+                -- Finde Original-Chunks und ihre _dup Gegenstücke
                 SELECT 
-                    ah.chunk_id,
-                    ah.user_name,
-                    ah.frame_label,
-                    ah.brexit_position,
-                    ah.annotation_notes,
-                    ah.created_at,
-                    c.speech_id,
-                    c.speaker_name,
-                    c.speaker_party,
-                    c.debate_title,
-                    c.debate_date,
-                    c.chunk_text
-                FROM annotation_history ah
-                JOIN chunks c ON ah.chunk_id = c.chunk_id
-                WHERE ah.frame_label IS NOT NULL AND ah.frame_label != ''
-            ),
-            -- Doppelt klassifizierte Chunks (mehrere User haben denselben Chunk annotiert)
-            double_annotated AS (
-                SELECT 
-                    c.chunk_id,
-                    c.speech_id,
-                    c.speaker_name,
-                    c.speaker_party,
-                    c.debate_title,
-                    c.debate_date,
-                    c.chunk_text,
-                    c.assigned_user as user1,
-                    c.frame_label as frame1,
-                    c.brexit_position as brexit1,
-                    c.annotation_notes as notes1,
-                    c.updated_at as created1,
-                    ah.user_name as user2,
-                    ah.frame_label as frame2,
-                    ah.brexit_position as brexit2,
-                    ah.annotation_notes as notes2,
-                    ah.created_at as created2
-                FROM chunks c
-                JOIN annotation_history ah ON c.chunk_id = ah.chunk_id
-                WHERE c.frame_label IS NOT NULL 
-                AND c.frame_label != ''
-                AND ah.frame_label IS NOT NULL 
-                AND ah.frame_label != ''
-                AND c.assigned_user != ah.user_name
-                AND (
-                    c.frame_label != ah.frame_label 
-                    OR (c.brexit_position IS DISTINCT FROM ah.brexit_position)
-                )
-            ),
-            -- Konflikte aus Annotation History
-            history_conflicts AS (
-                SELECT 
-                    ua1.chunk_id,
-                    ua1.speech_id,
-                    ua1.speaker_name,
-                    ua1.speaker_party,
-                    ua1.debate_title,
-                    ua1.debate_date,
-                    ua1.chunk_text,
-                    ua1.user_name as user1,
-                    ua1.frame_label as frame1,
-                    ua1.brexit_position as brexit1,
-                    ua1.annotation_notes as notes1,
-                    ua1.created_at as created1,
-                    ua2.user_name as user2,
-                    ua2.frame_label as frame2,
-                    ua2.brexit_position as brexit2,
-                    ua2.annotation_notes as notes2,
-                    ua2.created_at as created2
-                FROM user_annotations ua1
-                JOIN user_annotations ua2 ON ua1.chunk_id = ua2.chunk_id 
-                    AND ua1.user_name < ua2.user_name
-                WHERE ua1.frame_label != ua2.frame_label 
-                OR (ua1.brexit_position IS DISTINCT FROM ua2.brexit_position)
-            ),
-            -- Kombiniere beide Konflikttypen
-            all_conflicts AS (
-                SELECT * FROM double_annotated
-                UNION
-                SELECT * FROM history_conflicts
+                    c1.chunk_id as original_chunk,
+                    c2.chunk_id as dup_chunk,
+                    c1.assigned_user as user1,
+                    c1.frame_label as frame1,
+                    c1.brexit_position as brexit1,
+                    c1.annotation_notes as notes1,
+                    c1.updated_at as created1,
+                    c1.speech_id,
+                    c1.speaker_name,
+                    c1.speaker_party,
+                    c1.debate_title,
+                    c1.debate_date,
+                    c1.chunk_text,
+                    c2.assigned_user as user2,
+                    c2.frame_label as frame2,
+                    c2.brexit_position as brexit2,
+                    c2.annotation_notes as notes2,
+                    c2.updated_at as created2
+                FROM chunks c1
+                JOIN chunks c2 ON c1.chunk_id = REPLACE(c2.chunk_id, '_dup', '')
+                WHERE c1.chunk_id NOT LIKE '%_dup'
+                AND c2.chunk_id LIKE '%_dup'
+                AND c1.frame_label IS NOT NULL AND c1.frame_label != ''
+                AND c2.frame_label IS NOT NULL AND c2.frame_label != ''
+                AND c1.frame_label != c2.frame_label
             )
-            SELECT DISTINCT * FROM all_conflicts
+            SELECT DISTINCT * FROM chunk_pairs
             ORDER BY created2 DESC
         """)
         
@@ -926,6 +873,61 @@ def show_conflict_resolution():
     
     if not conflicts:
         st.info("🎉 Keine Konflikte gefunden! Alle Annotationen sind konsistent.")
+        
+        # Zeige zusätzliche Informationen wenn keine Konflikte vorhanden
+        st.subheader("📊 Annotation-Übersicht")
+        
+        # Lade Statistiken über alle Annotationen
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor()
+                
+                # User-Statistiken
+                cursor.execute("""
+                    SELECT user_name, COUNT(DISTINCT chunk_id) as chunks
+                    FROM (
+                        SELECT assigned_user as user_name, chunk_id FROM chunks WHERE frame_label IS NOT NULL AND frame_label != ''
+                        UNION ALL
+                        SELECT user_name, chunk_id FROM annotation_history WHERE frame_label IS NOT NULL AND frame_label != ''
+                    ) all_annotations
+                    GROUP BY user_name
+                    ORDER BY chunks DESC
+                """)
+                
+                user_stats = cursor.fetchall()
+                if user_stats:
+                    st.write("**User-Statistiken:**")
+                    for user, count in user_stats:
+                        st.write(f"- **{user}**: {count:,} Chunks")
+                
+                # Frame-Verteilung
+                cursor.execute("""
+                    SELECT frame_label, COUNT(*) as count
+                    FROM (
+                        SELECT frame_label FROM chunks WHERE frame_label IS NOT NULL AND frame_label != ''
+                        UNION ALL
+                        SELECT frame_label FROM annotation_history WHERE frame_label IS NOT NULL AND frame_label != ''
+                    ) all_frames
+                    GROUP BY frame_label
+                    ORDER BY count DESC
+                """)
+                
+                frame_stats = cursor.fetchall()
+                if frame_stats:
+                    st.write("**Frame-Verteilung:**")
+                    for frame, count in frame_stats:
+                        st.write(f"- **{frame}**: {count:,} Annotationen")
+                
+                cursor.close()
+                conn.close()
+                
+            except Exception as e:
+                st.error(f"Fehler beim Laden der Statistiken: {e}")
+                if conn:
+                    conn.close()
+        
+        st.info("💡 **Hinweis:** Um Konflikte zu testen, könntest du einen bereits annotierten Chunk von einem anderen User nochmal annotieren.")
         return
     
     st.write(f"**Gefundene Konflikte:** {len(conflicts)}")
@@ -974,12 +976,10 @@ def show_conflict_resolution():
     
     # Zeige Konflikte
     for i, conflict in enumerate(filtered_conflicts):
-        # Bestimme Konflikttyp
-        conflict_type = "Frame-Konflikt" if conflict['frame1'] != conflict['frame2'] else "Brexit-Position Konflikt"
-        if conflict['frame1'] != conflict['frame2'] and (conflict['brexit1'] != conflict['brexit2'] or (conflict['brexit1'] is None) != (conflict['brexit2'] is None)):
-            conflict_type = "Frame + Brexit-Position Konflikt"
+        # Bestimme Konflikttyp (nur Frame-Konflikte)
+        conflict_type = "Frame-Konflikt"
         
-        with st.expander(f"Konflikt {i+1}: {conflict['chunk_id'][:20]}... - {conflict['frame1']} vs {conflict['frame2']} ({conflict_type})"):
+        with st.expander(f"Konflikt {i+1}: {conflict['original_chunk'][:20]}... - {conflict['frame1']} vs {conflict['frame2']} ({conflict_type})"):
             
             # Chunk-Informationen
             col1, col2, col3 = st.columns(3)
@@ -988,36 +988,28 @@ def show_conflict_resolution():
             with col2:
                 st.write(f"**Datum:** {conflict['debate_date']}")
             with col3:
-                st.write(f"**Chunk-ID:** {conflict['chunk_id']}")
+                st.write(f"**Original:** {conflict['original_chunk']}<br/>**Duplikat:** {conflict['dup_chunk']}", unsafe_allow_html=True)
             
             # Chunk-Text
             st.subheader("📄 Chunk-Text")
-            st.text_area("", conflict['chunk_text'], height=150, disabled=True, key=f"text_{conflict['chunk_id']}")
+            st.text_area("", conflict['chunk_text'], height=150, disabled=True, key=f"text_{conflict['original_chunk']}")
             
             # Beide Annotationen anzeigen
-            st.subheader("⚔️ Konfliktierende Annotationen")
+            st.subheader("⚔️ Konfliktierende Frame-Annotationen")
             
             col1, col2 = st.columns(2)
             
             with col1:
                 st.markdown("### 👤 **User 1: " + conflict['user1'] + "**")
+                st.write(f"**Chunk:** {conflict['original_chunk']}")
                 st.write(f"**Frame:** {conflict['frame1']}")
-                brexit1_display = conflict['brexit1'] or 'Nicht gesetzt'
-                if conflict['brexit1'] != conflict['brexit2']:
-                    st.write(f"**Brexit-Position:** {brexit1_display} ⚠️")
-                else:
-                    st.write(f"**Brexit-Position:** {brexit1_display}")
                 st.write(f"**Notizen:** {conflict['notes1'] or 'Keine Notizen'}")
                 st.write(f"**Datum:** {conflict['created1']}")
             
             with col2:
                 st.markdown("### 👤 **User 2: " + conflict['user2'] + "**")
+                st.write(f"**Chunk:** {conflict['dup_chunk']}")
                 st.write(f"**Frame:** {conflict['frame2']}")
-                brexit2_display = conflict['brexit2'] or 'Nicht gesetzt'
-                if conflict['brexit1'] != conflict['brexit2']:
-                    st.write(f"**Brexit-Position:** {brexit2_display} ⚠️")
-                else:
-                    st.write(f"**Brexit-Position:** {brexit2_display}")
                 st.write(f"**Notizen:** {conflict['notes2'] or 'Keine Notizen'}")
                 st.write(f"**Datum:** {conflict['created2']}")
             
@@ -1027,32 +1019,25 @@ def show_conflict_resolution():
             col1, col2 = st.columns(2)
             
             with col1:
-                st.write("**Finale Annotation:**")
+                st.write("**Finale Frame-Annotation:**")
                 new_frame = st.selectbox(
                     "Frame-Kategorie:",
                     options=FRAME_CATEGORIES,
                     index=FRAME_CATEGORIES.index(conflict['frame1']) if conflict['frame1'] in FRAME_CATEGORIES else 0,
-                    key=f"new_frame_{conflict['chunk_id']}"
-                )
-                
-                new_brexit = st.selectbox(
-                    "Brexit-Position:",
-                    options=BREXIT_POSITION_CATEGORIES,
-                    index=BREXIT_POSITION_CATEGORIES.index(conflict['brexit1']) if conflict['brexit1'] in BREXIT_POSITION_CATEGORIES else 0,
-                    key=f"new_brexit_{conflict['chunk_id']}"
+                    key=f"new_frame_{conflict['original_chunk']}"
                 )
             
             with col2:
                 new_notes = st.text_area(
                     "Notizen:",
                     value=f"Konflikt gelöst zwischen {conflict['user1']} und {conflict['user2']}",
-                    key=f"new_notes_{conflict['chunk_id']}"
+                    key=f"new_notes_{conflict['original_chunk']}"
                 )
                 
                 resolved_by = st.text_input(
                     "Gelöst von:",
                     value=st.session_state.user_name or "",
-                    key=f"resolved_by_{conflict['chunk_id']}"
+                    key=f"resolved_by_{conflict['original_chunk']}"
                 )
             
             # Schnellauswahl-Buttons für häufige Entscheidungen
@@ -1060,26 +1045,24 @@ def show_conflict_resolution():
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                if st.button(f"✅ {conflict['frame1']}", key=f"quick1_{conflict['chunk_id']}"):
-                    st.session_state[f"new_frame_{conflict['chunk_id']}"] = conflict['frame1']
-                    st.session_state[f"new_brexit_{conflict['chunk_id']}"] = conflict['brexit1']
+                if st.button(f"✅ {conflict['frame1']}", key=f"quick1_{conflict['original_chunk']}"):
+                    st.session_state[f"new_frame_{conflict['original_chunk']}"] = conflict['frame1']
                     st.rerun()
             
             with col2:
-                if st.button(f"✅ {conflict['frame2']}", key=f"quick2_{conflict['chunk_id']}"):
-                    st.session_state[f"new_frame_{conflict['chunk_id']}"] = conflict['frame2']
-                    st.session_state[f"new_brexit_{conflict['chunk_id']}"] = conflict['brexit2']
+                if st.button(f"✅ {conflict['frame2']}", key=f"quick2_{conflict['original_chunk']}"):
+                    st.session_state[f"new_frame_{conflict['original_chunk']}"] = conflict['frame2']
                     st.rerun()
             
             with col3:
-                if st.button("🔄 Aktualisieren", key=f"refresh_{conflict['chunk_id']}"):
+                if st.button("🔄 Aktualisieren", key=f"refresh_{conflict['original_chunk']}"):
                     st.rerun()
             
             with col4:
-                if st.button("🗑️ Beide entfernen", key=f"delete_{conflict['chunk_id']}"):
+                if st.button("🗑️ Beide entfernen", key=f"delete_{conflict['original_chunk']}"):
                     if st.session_state.user_name:
                         success = resolve_conflict(
-                            conflict['chunk_id'], 
+                            conflict['original_chunk'], 
                             None, 
                             None, 
                             f"Beide Annotationen entfernt von {st.session_state.user_name}", 
@@ -1095,12 +1078,12 @@ def show_conflict_resolution():
             
             # Finale Lösung
             st.subheader("🎯 Finale Lösung")
-            if st.button("✅ Konflikt endgültig lösen", key=f"resolve_{conflict['chunk_id']}", type="primary"):
+            if st.button("✅ Konflikt endgültig lösen", key=f"resolve_{conflict['original_chunk']}", type="primary"):
                 if new_frame and resolved_by:
                     success = resolve_conflict(
-                        conflict['chunk_id'], 
+                        conflict['original_chunk'], 
                         new_frame, 
-                        new_brexit, 
+                        None,  # Keine Brexit-Position für Frame-Konflikte
                         new_notes, 
                         resolved_by
                     )
