@@ -629,7 +629,7 @@ def get_annotation_conflicts() -> List[Dict[str, Any]]:
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Suche nach Chunks mit unterschiedlichen Annotationen von verschiedenen Usern
+        # Erweiterte Konflikterkennung: Annotation History + Doppelt klassifizierte Chunks
         cursor.execute("""
             WITH user_annotations AS (
                 SELECT 
@@ -649,7 +649,40 @@ def get_annotation_conflicts() -> List[Dict[str, Any]]:
                 JOIN chunks c ON ah.chunk_id = c.chunk_id
                 WHERE ah.frame_label IS NOT NULL AND ah.frame_label != ''
             ),
-            conflicts AS (
+            -- Doppelt klassifizierte Chunks (mehrere User haben denselben Chunk annotiert)
+            double_annotated AS (
+                SELECT 
+                    c.chunk_id,
+                    c.speech_id,
+                    c.speaker_name,
+                    c.speaker_party,
+                    c.debate_title,
+                    c.debate_date,
+                    c.chunk_text,
+                    c.assigned_user as user1,
+                    c.frame_label as frame1,
+                    c.brexit_position as brexit1,
+                    c.annotation_notes as notes1,
+                    c.updated_at as created1,
+                    ah.user_name as user2,
+                    ah.frame_label as frame2,
+                    ah.brexit_position as brexit2,
+                    ah.annotation_notes as notes2,
+                    ah.created_at as created2
+                FROM chunks c
+                JOIN annotation_history ah ON c.chunk_id = ah.chunk_id
+                WHERE c.frame_label IS NOT NULL 
+                AND c.frame_label != ''
+                AND ah.frame_label IS NOT NULL 
+                AND ah.frame_label != ''
+                AND c.assigned_user != ah.user_name
+                AND (
+                    c.frame_label != ah.frame_label 
+                    OR (c.brexit_position IS DISTINCT FROM ah.brexit_position)
+                )
+            ),
+            -- Konflikte aus Annotation History
+            history_conflicts AS (
                 SELECT 
                     ua1.chunk_id,
                     ua1.speech_id,
@@ -671,9 +704,16 @@ def get_annotation_conflicts() -> List[Dict[str, Any]]:
                 FROM user_annotations ua1
                 JOIN user_annotations ua2 ON ua1.chunk_id = ua2.chunk_id 
                     AND ua1.user_name < ua2.user_name
-                WHERE ua1.frame_label != ua2.frame_label
+                WHERE ua1.frame_label != ua2.frame_label 
+                OR (ua1.brexit_position IS DISTINCT FROM ua2.brexit_position)
+            ),
+            -- Kombiniere beide Konflikttypen
+            all_conflicts AS (
+                SELECT * FROM double_annotated
+                UNION
+                SELECT * FROM history_conflicts
             )
-            SELECT * FROM conflicts
+            SELECT DISTINCT * FROM all_conflicts
             ORDER BY created2 DESC
         """)
         
@@ -784,7 +824,12 @@ def show_conflict_resolution():
     
     # Zeige Konflikte
     for i, conflict in enumerate(filtered_conflicts):
-        with st.expander(f"Konflikt {i+1}: {conflict['chunk_id'][:20]}... - {conflict['frame1']} vs {conflict['frame2']}"):
+        # Bestimme Konflikttyp
+        conflict_type = "Frame-Konflikt" if conflict['frame1'] != conflict['frame2'] else "Brexit-Position Konflikt"
+        if conflict['frame1'] != conflict['frame2'] and (conflict['brexit1'] != conflict['brexit2'] or (conflict['brexit1'] is None) != (conflict['brexit2'] is None)):
+            conflict_type = "Frame + Brexit-Position Konflikt"
+        
+        with st.expander(f"Konflikt {i+1}: {conflict['chunk_id'][:20]}... - {conflict['frame1']} vs {conflict['frame2']} ({conflict_type})"):
             
             # Chunk-Informationen
             col1, col2, col3 = st.columns(3)
@@ -807,14 +852,22 @@ def show_conflict_resolution():
             with col1:
                 st.markdown("### 👤 **User 1: " + conflict['user1'] + "**")
                 st.write(f"**Frame:** {conflict['frame1']}")
-                st.write(f"**Brexit-Position:** {conflict['brexit1'] or 'Nicht gesetzt'}")
+                brexit1_display = conflict['brexit1'] or 'Nicht gesetzt'
+                if conflict['brexit1'] != conflict['brexit2']:
+                    st.write(f"**Brexit-Position:** {brexit1_display} ⚠️")
+                else:
+                    st.write(f"**Brexit-Position:** {brexit1_display}")
                 st.write(f"**Notizen:** {conflict['notes1'] or 'Keine Notizen'}")
                 st.write(f"**Datum:** {conflict['created1']}")
             
             with col2:
                 st.markdown("### 👤 **User 2: " + conflict['user2'] + "**")
                 st.write(f"**Frame:** {conflict['frame2']}")
-                st.write(f"**Brexit-Position:** {conflict['brexit2'] or 'Nicht gesetzt'}")
+                brexit2_display = conflict['brexit2'] or 'Nicht gesetzt'
+                if conflict['brexit1'] != conflict['brexit2']:
+                    st.write(f"**Brexit-Position:** {brexit2_display} ⚠️")
+                else:
+                    st.write(f"**Brexit-Position:** {brexit2_display}")
                 st.write(f"**Notizen:** {conflict['notes2'] or 'Keine Notizen'}")
                 st.write(f"**Datum:** {conflict['created2']}")
             
