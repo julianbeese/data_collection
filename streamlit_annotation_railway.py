@@ -696,15 +696,18 @@ def resolve_conflict(chunk_id: str, final_frame: str, final_brexit: str, final_n
     try:
         cursor = conn.cursor()
         
-        # Aktualisiere die Annotation mit der finalen Entscheidung
+        # Aktualisiere BEIDE Chunks (Original und Duplikat) mit der finalen Entscheidung
         update_sql = """
         UPDATE chunks 
         SET frame_label = %s, brexit_position = %s, annotation_notes = %s, 
             assigned_user = %s, updated_at = CURRENT_TIMESTAMP
-        WHERE chunk_id = %s
+        WHERE chunk_id = %s OR chunk_id = %s
         """
         
-        cursor.execute(update_sql, (final_frame, final_brexit, final_notes, resolved_by, chunk_id))
+        # Erstelle Duplikat-Chunk-ID
+        dup_chunk_id = chunk_id + '_dup'
+        
+        cursor.execute(update_sql, (final_frame, final_brexit, final_notes, resolved_by, chunk_id, dup_chunk_id))
         conn.commit()
         cursor.close()
         conn.close()
