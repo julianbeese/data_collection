@@ -174,6 +174,13 @@ def cleanup_connections():
     except Exception as e:
         st.error(f"Fehler beim Schließen der Verbindungen: {e}")
 
+def safe_rerun():
+    """Rate-limited rerun um WebSocket-Fehler zu reduzieren"""
+    current_time = time.time()
+    if current_time - st.session_state.get('last_rerun', 0) >= 0.5:  # Mindestens 0.5 Sekunden zwischen Reruns
+        st.session_state.last_rerun = current_time
+        st.rerun()
+
 def init_session_state():
     """Initialisiert Session State"""
     if 'chunks' not in st.session_state:
@@ -678,7 +685,8 @@ def show_chunk_annotation():
                 else:
                     st.info("🎉 Alle Chunks annotiert!")
                 
-                st.rerun()
+                # Rate-limited rerun
+                safe_rerun()
             else:
                 st.error("Bitte wähle eine Frame-Kategorie!")
     
@@ -686,7 +694,7 @@ def show_chunk_annotation():
         if st.button("⏭️ Nächster"):
             if st.session_state.current_chunk_index < len(st.session_state.chunks) - 1:
                 st.session_state.current_chunk_index += 1
-                st.rerun()
+                safe_rerun()
             else:
                 st.info("Letzter Chunk erreicht!")
     
@@ -694,7 +702,7 @@ def show_chunk_annotation():
         if st.button("⏮️ Vorheriger"):
             if st.session_state.current_chunk_index > 0:
                 st.session_state.current_chunk_index -= 1
-                st.rerun()
+                safe_rerun()
             else:
                 st.info("Erster Chunk erreicht!")
     
@@ -711,7 +719,7 @@ def show_chunk_annotation():
     
     if st.button("Gehe zu Chunk"):
         st.session_state.current_chunk_index = new_index - 1
-        st.rerun()
+        safe_rerun()
 
 def get_classified_chunks() -> List[Dict[str, Any]]:
     """Lädt alle klassifizierten Chunks aus der Datenbank"""
@@ -1197,16 +1205,16 @@ def show_conflict_resolution():
             with col1:
                 if st.button(f"✅ {conflict['frame1']}", key=f"quick1_{conflict['original_chunk']}"):
                     st.session_state[f"new_frame_{conflict['original_chunk']}"] = conflict['frame1']
-                    st.rerun()
+                    safe_rerun()
             
             with col2:
                 if st.button(f"✅ {conflict['frame2']}", key=f"quick2_{conflict['original_chunk']}"):
                     st.session_state[f"new_frame_{conflict['original_chunk']}"] = conflict['frame2']
-                    st.rerun()
+                    safe_rerun()
             
             with col3:
                 if st.button("🔄 Aktualisieren", key=f"refresh_{conflict['original_chunk']}"):
-                    st.rerun()
+                    safe_rerun()
             
             with col4:
                 if st.button("🗑️ Beide entfernen", key=f"delete_{conflict['original_chunk']}"):
@@ -1220,7 +1228,7 @@ def show_conflict_resolution():
                         )
                         if success:
                             st.success("✅ Beide Annotationen entfernt!")
-                            st.rerun()
+                            safe_rerun()
                         else:
                             st.error("❌ Fehler beim Entfernen der Annotationen!")
                     else:
@@ -1239,7 +1247,7 @@ def show_conflict_resolution():
                     )
                     if success:
                         st.success("✅ Konflikt erfolgreich gelöst!")
-                        st.rerun()
+                        safe_rerun()
                     else:
                         st.error("❌ Fehler beim Lösen des Konflikts!")
                 else:
@@ -1395,7 +1403,7 @@ def show_classified_chunks():
     
     with col1:
         if st.button("🔄 Aktualisieren"):
-            st.rerun()
+            safe_rerun()
     
     # Detaillierte Ansicht für ausgewählte Chunks
     st.subheader("🔍 Detaillierte Ansicht")
@@ -1511,8 +1519,13 @@ def main():
     st.set_page_config(
         page_title="Frame Classification - Railway",
         page_icon="🏷️",
-        layout="wide"
+        layout="wide",
+        initial_sidebar_state="expanded"
     )
+    
+    # WebSocket-Fehler reduzieren durch optimierte Reruns
+    if 'last_rerun' not in st.session_state:
+        st.session_state.last_rerun = 0
     
     st.title("🏷️ Frame Classification - Railway")
     st.markdown("**Multi-User Annotation von Brexit-Debatten Chunks auf Railway**")
@@ -1546,7 +1559,7 @@ def main():
         )
         if user_name != st.session_state.user_name:
             st.session_state.user_name = user_name
-            st.rerun()
+            safe_rerun()
         
         # Chunk-Limit
         chunk_limit = st.number_input(
@@ -1588,7 +1601,7 @@ def main():
         
         # Statistiken
         if st.button("📊 Statistiken aktualisieren"):
-            st.rerun()
+            safe_rerun()
     
     # Hauptbereich
     if not st.session_state.chunks:
