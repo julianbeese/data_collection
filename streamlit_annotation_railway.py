@@ -97,15 +97,15 @@ class DatabasePool:
 # Global pool instance
 _db_pool = DatabasePool()
 
-# Performance Monitoring
+# Performance Monitoring (reduziert für Railway Rate Limits)
 def log_performance(func_name: str, start_time: float):
-    """Loggt Performance-Metriken"""
+    """Loggt Performance-Metriken (nur bei sehr langsamen Operationen)"""
     duration = time.time() - start_time
-    if duration > 1.0:  # Nur bei langsamen Operationen loggen
+    if duration > 5.0:  # Nur bei sehr langsamen Operationen loggen (>5s)
         st.warning(f"⚠️ {func_name} dauerte {duration:.2f}s - Performance-Optimierung empfohlen")
 
-# Caching für bessere Performance
-@st.cache_data(ttl=300)  # Cache für 5 Minuten
+# Caching für bessere Performance (längere TTL für Railway)
+@st.cache_data(ttl=600)  # Cache für 10 Minuten
 def cached_get_statistics() -> Dict[str, Any]:
     """Gecachte Version der Statistiken"""
     start_time = time.time()
@@ -113,7 +113,7 @@ def cached_get_statistics() -> Dict[str, Any]:
     log_performance("get_statistics", start_time)
     return result
 
-@st.cache_data(ttl=60)  # Cache für 1 Minute
+@st.cache_data(ttl=300)  # Cache für 5 Minuten
 def cached_get_classified_chunks() -> List[Dict[str, Any]]:
     """Gecachte Version der klassifizierten Chunks"""
     start_time = time.time()
@@ -121,7 +121,7 @@ def cached_get_classified_chunks() -> List[Dict[str, Any]]:
     log_performance("get_classified_chunks", start_time)
     return result
 
-@st.cache_data(ttl=60)  # Cache für 1 Minute
+@st.cache_data(ttl=300)  # Cache für 5 Minuten
 def cached_get_annotation_conflicts() -> List[Dict[str, Any]]:
     """Gecachte Version der Annotation-Konflikte"""
     start_time = time.time()
@@ -298,7 +298,9 @@ def create_tables_if_not_exist():
             conn.rollback()
         
         cursor.close()
-        st.success("✅ Tabellen erfolgreich erstellt/aktualisiert!")
+        # Erfolgsmeldung nur bei Debug-Modus
+        if os.getenv('DEBUG', 'false').lower() == 'true':
+            st.success("✅ Tabellen erfolgreich erstellt/aktualisiert!")
         
     except Exception as e:
         st.error(f"❌ Fehler beim Erstellen der Tabellen: {e}")
@@ -1281,7 +1283,7 @@ def show_classified_chunks():
     # Sortierbare Tabelle
     st.dataframe(
         df,
-        use_container_width=True,
+        width='stretch',
         height=600
     )
     
@@ -1386,7 +1388,7 @@ def show_classified_chunks():
                 })
             
             filtered_df = pd.DataFrame(filtered_display_data)
-            st.dataframe(filtered_df, use_container_width=True, height=400)
+            st.dataframe(filtered_df, width='stretch', height=400)
     
     # Aktualisieren-Button
     col1, col2, col3 = st.columns(3)
@@ -1471,7 +1473,7 @@ def show_admin_view():
                 })
             
             df = pd.DataFrame(admin_data)
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width='stretch')
         
         # Unzugewiesene Chunks
         cursor.execute("""
@@ -1515,8 +1517,8 @@ def main():
     st.title("🏷️ Frame Classification - Railway")
     st.markdown("**Multi-User Annotation von Brexit-Debatten Chunks auf Railway**")
     
-    # Debug-Informationen (nur in Development)
-    if os.getenv('RAILWAY_ENVIRONMENT') != 'production':
+    # Debug-Informationen (nur in Development und reduziert)
+    if os.getenv('RAILWAY_ENVIRONMENT') != 'production' and os.getenv('DEBUG', 'false').lower() == 'true':
         with st.expander("🔧 Debug-Informationen"):
             st.write(f"DATABASE_URL gesetzt: {'Ja' if os.getenv('DATABASE_URL') else 'Nein'}")
             if os.getenv('DATABASE_URL'):
