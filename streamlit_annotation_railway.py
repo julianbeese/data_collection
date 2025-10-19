@@ -15,6 +15,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 from psycopg2.extras import RealDictCursor
+from psycopg2 import pool
+import threading
+import time
+import functools
 
 # Railway PostgreSQL Konfiguration (Fallback für lokale Entwicklung)
 DATABASE_CONFIG = {
@@ -24,6 +28,106 @@ DATABASE_CONFIG = {
     'user': os.getenv('DB_USER', 'postgres'),
     'password': os.getenv('DB_PASSWORD', '')
 }
+
+# Connection Pool für bessere Performance
+_connection_pool = None
+_pool_lock = threading.Lock()
+
+class DatabasePool:
+    """Thread-safe database connection pool"""
+    
+    def __init__(self):
+        self.pool = None
+        self.lock = threading.Lock()
+    
+    def get_pool(self):
+        """Get or create connection pool"""
+        if self.pool is None:
+            with self.lock:
+                if self.pool is None:
+                    try:
+                        database_url = os.getenv('DATABASE_URL')
+                        if database_url:
+                            # Parse DATABASE_URL for connection pool
+                            self.pool = psycopg2.pool.ThreadedConnectionPool(
+                                minconn=1,
+                                maxconn=10,
+                                dsn=database_url
+                            )
+                        else:
+                            # Use config for local development
+                            self.pool = psycopg2.pool.ThreadedConnectionPool(
+                                minconn=1,
+                                maxconn=5,
+                                **DATABASE_CONFIG
+                            )
+                    except Exception as e:
+                        st.error(f"Fehler beim Erstellen des Connection Pools: {e}")
+                        return None
+        return self.pool
+    
+    def get_connection(self):
+        """Get connection from pool"""
+        pool = self.get_pool()
+        if pool:
+            try:
+                return pool.getconn()
+            except Exception as e:
+                st.error(f"Fehler beim Abrufen der Verbindung: {e}")
+                return None
+        return None
+    
+    def return_connection(self, conn):
+        """Return connection to pool"""
+        pool = self.get_pool()
+        if pool and conn:
+            try:
+                pool.putconn(conn)
+            except Exception as e:
+                st.error(f"Fehler beim Zurückgeben der Verbindung: {e}")
+    
+    def close_all(self):
+        """Close all connections in pool"""
+        if self.pool:
+            try:
+                self.pool.closeall()
+            except Exception as e:
+                st.error(f"Fehler beim Schließen des Pools: {e}")
+
+# Global pool instance
+_db_pool = DatabasePool()
+
+# Performance Monitoring
+def log_performance(func_name: str, start_time: float):
+    """Loggt Performance-Metriken"""
+    duration = time.time() - start_time
+    if duration > 1.0:  # Nur bei langsamen Operationen loggen
+        st.warning(f"⚠️ {func_name} dauerte {duration:.2f}s - Performance-Optimierung empfohlen")
+
+# Caching für bessere Performance
+@st.cache_data(ttl=300)  # Cache für 5 Minuten
+def cached_get_statistics() -> Dict[str, Any]:
+    """Gecachte Version der Statistiken"""
+    start_time = time.time()
+    result = get_statistics()
+    log_performance("get_statistics", start_time)
+    return result
+
+@st.cache_data(ttl=60)  # Cache für 1 Minute
+def cached_get_classified_chunks() -> List[Dict[str, Any]]:
+    """Gecachte Version der klassifizierten Chunks"""
+    start_time = time.time()
+    result = get_classified_chunks()
+    log_performance("get_classified_chunks", start_time)
+    return result
+
+@st.cache_data(ttl=60)  # Cache für 1 Minute
+def cached_get_annotation_conflicts() -> List[Dict[str, Any]]:
+    """Gecachte Version der Annotation-Konflikte"""
+    start_time = time.time()
+    result = get_annotation_conflicts()
+    log_performance("get_annotation_conflicts", start_time)
+    return result
 
 # Frame-Kategorien
 FRAME_CATEGORIES = [
@@ -45,22 +149,30 @@ BREXIT_POSITION_CATEGORIES = [
 ]
 
 def get_db_connection():
-    """Erstellt PostgreSQL Verbindung für Railway"""
+    """Erstellt PostgreSQL Verbindung für Railway mit Connection Pool"""
     try:
-        # Railway DATABASE_URL Format: postgresql://user:password@host:port/database
-        database_url = os.getenv('DATABASE_URL')
-        if database_url:
-            # Verwende die DATABASE_URL direkt
-            conn = psycopg2.connect(database_url)
-            return conn
-        else:
-            # Fallback für lokale Entwicklung
-            conn = psycopg2.connect(**DATABASE_CONFIG)
-            return conn
+        conn = _db_pool.get_connection()
+        if conn is None:
+            st.error("❌ Keine Datenbankverbindung verfügbar!")
+            st.error("🔧 Bitte überprüfe die DATABASE_URL Konfiguration")
+            return None
+        return conn
     except Exception as e:
-        st.error(f"Fehler bei Datenbankverbindung: {e}")
-        st.error(f"DATABASE_URL: {os.getenv('DATABASE_URL', 'Nicht gesetzt')}")
+        st.error(f"❌ Fehler bei Datenbankverbindung: {e}")
+        st.error(f"🔧 DATABASE_URL: {os.getenv('DATABASE_URL', 'Nicht gesetzt')}")
         return None
+
+def return_db_connection(conn):
+    """Gibt Verbindung an Pool zurück"""
+    if conn:
+        _db_pool.return_connection(conn)
+
+def cleanup_connections():
+    """Bereinigt alle Verbindungen beim Beenden"""
+    try:
+        _db_pool.close_all()
+    except Exception as e:
+        st.error(f"Fehler beim Schließen der Verbindungen: {e}")
 
 def init_session_state():
     """Initialisiert Session State"""
@@ -140,9 +252,16 @@ def create_tables_if_not_exist():
             );
         """)
         
-        # Indizes
+        # Indizes für bessere Performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_assigned_user ON chunks(assigned_user);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_frame_label ON chunks(frame_label);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_brexit_position ON chunks(brexit_position);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_pre_brexit ON chunks(pre_brexit);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_speaker_name ON chunks(speaker_name);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_debate_date ON chunks(debate_date);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_updated_at ON chunks(updated_at);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_annotation_history_chunk_id ON annotation_history(chunk_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_annotation_history_user_name ON annotation_history(user_name);")
         
         # Füge neue Spalten hinzu falls sie nicht existieren
         try:
@@ -161,12 +280,13 @@ def create_tables_if_not_exist():
         
         conn.commit()
         cursor.close()
-        conn.close()
         
     except Exception as e:
         st.error(f"Fehler beim Erstellen der Tabellen: {e}")
         if conn:
-            conn.close()
+            conn.rollback()
+    finally:
+        return_db_connection(conn)
 
 def load_database_chunks(user_name: str = None, limit: int = None, only_unannotated: bool = True) -> List[Dict[str, Any]]:
     """Lädt Chunks aus PostgreSQL für einen bestimmten User"""
@@ -234,7 +354,6 @@ def load_database_chunks(user_name: str = None, limit: int = None, only_unannota
         
         chunks = cursor.fetchall()
         cursor.close()
-        conn.close()
         
         # Konvertiere zu Dictionary-Liste
         chunk_list = []
@@ -245,10 +364,13 @@ def load_database_chunks(user_name: str = None, limit: int = None, only_unannota
         return chunk_list
         
     except Exception as e:
-        st.error(f"Fehler beim Laden der Chunks: {e}")
+        st.error(f"❌ Fehler beim Laden der Chunks: {e}")
+        st.error("🔧 Bitte versuche es erneut oder kontaktiere den Administrator")
         if conn:
-            conn.close()
+            conn.rollback()
         return []
+    finally:
+        return_db_connection(conn)
 
 def update_database_annotation(chunk_id: str, frame_label: str, confidence: int, notes: str, user_name: str, brexit_position: str = None):
     """Aktualisiert Annotation in PostgreSQL"""
@@ -279,13 +401,13 @@ def update_database_annotation(chunk_id: str, frame_label: str, confidence: int,
         
         conn.commit()
         cursor.close()
-        conn.close()
         
     except Exception as e:
         st.error(f"Fehler beim Aktualisieren der Datenbank: {e}")
         if conn:
             conn.rollback()
-            conn.close()
+    finally:
+        return_db_connection(conn)
 
 def get_statistics() -> Dict[str, Any]:
     """Berechnet Statistiken"""
@@ -346,7 +468,6 @@ def get_statistics() -> Dict[str, Any]:
         brexit_timing_stats = cursor.fetchone()
         
         cursor.close()
-        conn.close()
         
         return {
             'total_chunks': total_stats[0],
@@ -362,12 +483,14 @@ def get_statistics() -> Dict[str, Any]:
     except Exception as e:
         st.error(f"Fehler beim Laden der Statistiken: {e}")
         if conn:
-            conn.close()
+            conn.rollback()
         return {}
+    finally:
+        return_db_connection(conn)
 
 def show_statistics():
     """Zeigt Statistiken"""
-    stats = get_statistics()
+    stats = cached_get_statistics()
     
     if not stats:
         return
@@ -472,7 +595,7 @@ def show_chunk_annotation():
     
     # Chunk-Text
     st.subheader("📄 Chunk-Text")
-    st.text_area("", current_chunk['chunk_text'], height=200, disabled=True)
+    st.text_area("Chunk-Text", current_chunk['chunk_text'], height=200, disabled=True, label_visibility="collapsed")
     
     # Annotation-Formular
     st.subheader("🏷️ Frame-Annotation")
@@ -823,7 +946,7 @@ def show_conflict_resolution():
     st.markdown("Übersicht über echte Konflikte zwischen verschiedenen Usern und deren Lösung")
     
     # Lade echte Konflikte
-    conflicts = get_annotation_conflicts()
+    conflicts = cached_get_annotation_conflicts()
     
     # Lade Doppelklassifizierungs-Statistiken
     double_stats = get_double_classification_stats()
@@ -1000,7 +1123,7 @@ def show_conflict_resolution():
             
             # Chunk-Text
             st.subheader("📄 Chunk-Text")
-            st.text_area("", conflict['chunk_text'], height=150, disabled=True, key=f"text_{conflict['original_chunk']}")
+            st.text_area("Chunk-Text", conflict['chunk_text'], height=150, disabled=True, key=f"text_{conflict['original_chunk']}", label_visibility="collapsed")
             
             # Beide Annotationen anzeigen
             st.subheader("⚔️ Konfliktierende Frame-Annotationen")
@@ -1107,7 +1230,7 @@ def show_classified_chunks():
     st.markdown("Übersicht über alle bereits klassifizierten Chunks mit Filter- und Suchoptionen")
     
     # Lade klassifizierte Chunks
-    chunks = get_classified_chunks()
+    chunks = cached_get_classified_chunks()
     
     if not chunks:
         st.info("Keine klassifizierten Chunks gefunden.")
@@ -1285,7 +1408,7 @@ def show_classified_chunks():
             st.write(f"**Zeichen:** {selected_chunk['char_count']}")
         
         st.write("**Chunk-Text:**")
-        st.text_area("", selected_chunk['chunk_text'], height=200, disabled=True)
+        st.text_area("Chunk-Text", selected_chunk['chunk_text'], height=200, disabled=True, label_visibility="collapsed")
         
         if selected_chunk['annotation_notes']:
             st.write("**Notizen:**")
@@ -1424,14 +1547,21 @@ def main():
         # Lade Chunks
         if st.button("🔄 Chunks laden"):
             if not st.session_state.user_name:
-                st.error("Bitte gib zuerst deinen Namen ein!")
+                st.error("❌ Bitte gib zuerst deinen Namen ein!")
             else:
-                with st.spinner("Lade Chunks aus PostgreSQL..."):
-                    st.session_state.chunks = load_database_chunks(st.session_state.user_name, chunk_limit, only_unannotated)
-                    st.session_state.current_chunk_index = 0
-                
-                chunk_type_text = "unklassifizierte" if only_unannotated else "alle"
-                st.success(f"✓ {len(st.session_state.chunks)} {chunk_type_text} Chunks für {st.session_state.user_name} geladen!")
+                with st.spinner("🔄 Lade Chunks aus PostgreSQL..."):
+                    try:
+                        st.session_state.chunks = load_database_chunks(st.session_state.user_name, chunk_limit, only_unannotated)
+                        st.session_state.current_chunk_index = 0
+                        
+                        chunk_type_text = "unklassifizierte" if only_unannotated else "alle"
+                        if st.session_state.chunks:
+                            st.success(f"✅ {len(st.session_state.chunks)} {chunk_type_text} Chunks für {st.session_state.user_name} geladen!")
+                        else:
+                            st.warning(f"⚠️ Keine {chunk_type_text} Chunks für {st.session_state.user_name} gefunden!")
+                    except Exception as e:
+                        st.error(f"❌ Fehler beim Laden der Chunks: {e}")
+                        st.error("🔧 Bitte versuche es erneut oder kontaktiere den Administrator")
         
         st.divider()
         
