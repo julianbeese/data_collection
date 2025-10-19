@@ -252,37 +252,56 @@ def create_tables_if_not_exist():
             );
         """)
         
-        # Indizes für bessere Performance
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_assigned_user ON chunks(assigned_user);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_frame_label ON chunks(frame_label);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_brexit_position ON chunks(brexit_position);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_pre_brexit ON chunks(pre_brexit);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_speaker_name ON chunks(speaker_name);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_debate_date ON chunks(debate_date);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_updated_at ON chunks(updated_at);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_annotation_history_chunk_id ON annotation_history(chunk_id);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_annotation_history_user_name ON annotation_history(user_name);")
+        conn.commit()
         
-        # Füge neue Spalten hinzu falls sie nicht existieren
+        # Indizes für bessere Performance (separate Transaktionen)
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_assigned_user ON chunks(assigned_user);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_frame_label ON chunks(frame_label);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_brexit_position ON chunks(brexit_position);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_pre_brexit ON chunks(pre_brexit);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_speaker_name ON chunks(speaker_name);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_debate_date ON chunks(debate_date);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_updated_at ON chunks(updated_at);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_annotation_history_chunk_id ON annotation_history(chunk_id);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_annotation_history_user_name ON annotation_history(user_name);")
+            conn.commit()
+        except Exception as e:
+            st.warning(f"⚠️ Einige Indizes konnten nicht erstellt werden: {e}")
+            conn.rollback()
+        
+        # Füge neue Spalten hinzu falls sie nicht existieren (separate Transaktionen)
         try:
             cursor.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS pre_brexit BOOLEAN;")
-            cursor.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS brexit_position VARCHAR(100);")
+            conn.commit()
         except Exception as e:
-            # Spalten existieren möglicherweise bereits
-            pass
+            st.warning(f"⚠️ Spalte pre_brexit existiert bereits oder konnte nicht hinzugefügt werden: {e}")
+            conn.rollback()
+        
+        try:
+            cursor.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS brexit_position VARCHAR(100);")
+            conn.commit()
+        except Exception as e:
+            st.warning(f"⚠️ Spalte brexit_position existiert bereits oder konnte nicht hinzugefügt werden: {e}")
+            conn.rollback()
         
         # Aktualisiere pre_brexit Spalte basierend auf debate_date
-        cursor.execute("""
-            UPDATE chunks 
-            SET pre_brexit = (debate_date < '2016-06-23'::date)
-            WHERE pre_brexit IS NULL
-        """)
+        try:
+            cursor.execute("""
+                UPDATE chunks 
+                SET pre_brexit = (debate_date < '2016-06-23'::date)
+                WHERE pre_brexit IS NULL
+            """)
+            conn.commit()
+        except Exception as e:
+            st.warning(f"⚠️ Pre-Brexit Update fehlgeschlagen: {e}")
+            conn.rollback()
         
-        conn.commit()
         cursor.close()
+        st.success("✅ Tabellen erfolgreich erstellt/aktualisiert!")
         
     except Exception as e:
-        st.error(f"Fehler beim Erstellen der Tabellen: {e}")
+        st.error(f"❌ Fehler beim Erstellen der Tabellen: {e}")
         if conn:
             conn.rollback()
     finally:
