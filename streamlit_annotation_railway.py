@@ -495,7 +495,7 @@ def show_chunk_annotation():
             help="Nur für Pre-Brexit Chunks relevant"
         )
     
-    # Notes
+    # Notas
     notes = st.text_area(
         "Notizen:",
         placeholder="Optionale Notizen zur Annotation...",
@@ -659,10 +659,10 @@ def get_annotation_conflicts() -> List[Dict[str, Any]]:
                 AND c1.frame_label IS NOT NULL AND c1.frame_label != ''
                 AND c2.frame_label IS NOT NULL AND c2.frame_label != ''
                 AND c1.frame_label != c2.frame_label
-                -- Filtere Konflikte mit "t.b.d." und "None/Not Relevant" heraus
+                -- Filtere nur Konflikte zwischen "t.b.d." und "None/Not Relevant" heraus
                 AND NOT (
-                    (c1.frame_label IN ('t.b.d.', 'None/Not Relevant') AND c2.frame_label IN ('t.b.d.', 'None/Not Relevant'))
-                    OR (c1.frame_label IN ('t.b.d.', 'None/Not Relevant') OR c2.frame_label IN ('t.b.d.', 'None/Not Relevant'))
+                    (c1.frame_label = 't.b.d.' AND c2.frame_label = 'None/Not Relevant')
+                    OR (c1.frame_label = 'None/Not Relevant' AND c2.frame_label = 't.b.d.')
                 )
             )
             SELECT DISTINCT * FROM chunk_pairs
