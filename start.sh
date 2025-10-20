@@ -1,5 +1,5 @@
 #!/bin/bash
-# Railway Start Script
+# Railway Start Script - Optimized
 echo "Starting Railway deployment..."
 
 # Install streamlit if not present
@@ -13,6 +13,15 @@ echo "Checking for streamlit..."
 source /opt/venv/bin/activate
 echo "Virtual environment activated"
 
-# Run streamlit
-echo "Starting streamlit..."
-/opt/venv/bin/python -m streamlit run streamlit_annotation_railway.py --server.port=$PORT --server.address=0.0.0.0
+# Run streamlit with optimized settings
+echo "Starting streamlit with optimized settings..."
+/opt/venv/bin/python -m streamlit run streamlit_annotation_railway.py \
+  --server.port=$PORT \
+  --server.address=0.0.0.0 \
+  --server.headless=true \
+  --server.runOnSave=false \
+  --server.maxUploadSize=200 \
+  --server.maxMessageSize=200 \
+  --server.enableCORS=false \
+  --server.enableXsrfProtection=false \
+  --browser.gatherUsageStats=false
