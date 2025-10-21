@@ -1,0 +1,59 @@
+# Training Configuration for GPT-OSS-20B Fine-tuning
+model:
+  name: "gpt-oss-20b"
+  base_model: "openai-community/gpt-oss-20b"  # Hugging Face model ID
+  trust_remote_code: true
+  
+data:
+  database_path: "../data/debates_brexit_chunked.duckdb"
+  table_name: "training_data"
+  text_column: "text"
+  label_columns: 6  # Anzahl der Label-Spalten
+  train_split: "train"
+  test_split: "test"
+  split_column: "split"  # Spalte, die train/test kennzeichnet
+  max_length: 2048
+  
+training:
+  # LoRA Configuration für effizientes Training
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  
+  # Training Hyperparameters
+  num_epochs: 3
+  batch_size: 4  # Per GPU
+  gradient_accumulation_steps: 8  # Effektive Batch Size: 32
+  learning_rate: 2e-4
+  weight_decay: 0.01
+  warmup_steps: 100
+  max_grad_norm: 1.0
+  
+  # Mixed Precision Training
+  fp16: false
+  bf16: true  # H100 unterstützt BF16 optimal
+  
+  # Optimizer
+  optimizer: "adamw_torch"
+  lr_scheduler: "cosine"
+  
+  # Logging
+  logging_steps: 10
+  eval_steps: 100
+  save_steps: 500
+  save_total_limit: 3
+  
+  # Output
+  output_dir: "./outputs"
+  checkpoint_dir: "./checkpoints"
+  
+hardware:
+  gpu: "H100_SXM"
+  num_gpus: 1
+  device_map: "auto"
+  
+evaluation:
+  metric: "f1_macro"  # Für Multi-Label-Klassifikation
+  batch_size: 8
